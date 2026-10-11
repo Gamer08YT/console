@@ -806,6 +806,19 @@ watch(
   { immediate: true },
 );
 
+const hasWorker = "serviceWorker" in navigator;
+async function openWithoutCopy() {
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+  } catch {
+    /* nothing to drop: the reload alone */
+  }
+  location.reload();
+}
+
 /* Several screens: find where the captured one sits, and save it. */
 async function findThisScreen(progress: (t: string) => void): Promise<string> {
   const canvas = pictureOf(surface.value);
@@ -1860,7 +1873,23 @@ const LED_BITS: Array<[number, string]> = [
   <div v-if="loadError" class="fatal">
     <h2>Cannot reach the device</h2>
     <p class="muted">{{ loadError }}</p>
-    <button type="button" class="btn btn-primary" @click="reload">Retry</button>
+    <!-- After a certificate change the browser refuses the device, and to the
+         service worker that is just a failed fetch: it serves its saved copy of
+         this page, which can only say "cannot reach". The browser's own warning
+         never shows - not in a new tab either, and not after a restart, because
+         the worker outlives both. Dropping the worker lets the next load reach
+         the device, and the warning appear. -->
+    <p v-if="/fetch|network|load failed/i.test(loadError)" class="muted">
+      If the device's certificate just changed, the browser may be refusing it
+      without showing why: this page is a copy the browser kept. Open it without
+      the saved copy to see the browser's certificate warning.
+    </p>
+    <div class="fatal-actions">
+      <button type="button" class="btn btn-primary" @click="reload">Retry</button>
+      <button v-if="hasWorker" type="button" class="btn" @click="openWithoutCopy">
+        Open without the saved copy
+      </button>
+    </div>
   </div>
 
   <LoginView

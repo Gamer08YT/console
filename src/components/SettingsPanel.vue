@@ -711,7 +711,14 @@ async function doInstallCert() {
 }
 
 async function doRevertCert() {
-  if (!confirm("Remove your certificate and go back to the self-signed one? The device restarts.")) {
+  if (
+    !confirm(
+      "Remove your certificate and go back to the self-signed one? The device restarts, and a browser " +
+        "that does not trust the device's own CA will then refuse it; this console then offers to open " +
+        "the page without its saved copy, which shows the browser's warning. To renew a certificate, " +
+        "use \"Replace\" instead: no revert needed.",
+    )
+  ) {
     return;
   }
   tlsBusy.value = true;
@@ -1359,12 +1366,40 @@ async function doRevertCert() {
           <template v-if="tls?.custom">
             <p class="setting-note">
               The device is serving your own certificate. Whatever issued it is
-              trusted elsewhere, so there is no CA to import here. Remove it to go
-              back to the self-signed certificate.
+              trusted elsewhere, so there is no CA to import here.
             </p>
+            <!-- Renewing is the common case - certificates are heading for
+                 47-day lives - so it is a replace in place, not a revert first. -->
+            <p class="setting-note" style="margin-top: 12px">
+              To renew it, paste the new certificate (chain, leaf first) and its
+              private key, or pick a combined PEM file. It replaces the old one
+              and the device restarts. A script can do the same with
+              <code>PUT /api/v1/tls/cert</code>.
+            </p>
+            <textarea
+              v-model="certText"
+              class="cert-input"
+              rows="6"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----&#10;-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+            ></textarea>
+            <div class="cert-actions">
+              <input type="file" accept=".pem,.crt,.cer,.key,.txt" @change="loadCertFile" />
+              <button
+                type="button"
+                class="btn btn-sm"
+                :disabled="tlsBusy || !certText.trim()"
+                @click="doInstallCert"
+              >
+                {{ tlsBusy ? "Replacing..." : "Replace certificate" }}
+              </button>
+            </div>
             <button
               type="button"
-              class="btn btn-sm"
+              class="btn btn-sm btn-quiet"
+              style="margin-top: 12px"
               :disabled="tlsBusy"
               @click="doRevertCert"
             >

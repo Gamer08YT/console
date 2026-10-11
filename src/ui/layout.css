@@ -522,6 +522,13 @@
 
 /* ---- fatal -------------------------------------------------------------- */
 
+.fatal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
 .fatal {
   display: flex;
   flex-direction: column;
