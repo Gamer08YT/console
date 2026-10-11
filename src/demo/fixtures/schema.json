@@ -1228,6 +1228,16 @@
       "requires": "tailscale"
     },
     {
+      "key": "ts_cert",
+      "section": "vpn",
+      "group": "Tailscale",
+      "title": "Trusted certificate (Let's Encrypt)",
+      "help": "Get a Let's Encrypt certificate for the device's tailnet name (host.tailnet.ts.net) and renew it on its own, so a browser trusts the console with nothing imported. Needs MagicDNS and HTTPS certificates turned on in the Tailscale admin console (DNS page). The name is published in Certificate Transparency logs. The local name and the IP addresses keep the device's own certificate.",
+      "type": "bool",
+      "default": 0,
+      "requires": "tailscale"
+    },
+    {
       "key": "mqtt_enable",
       "section": "mqtt",
       "group": "Broker",

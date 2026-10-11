@@ -11,7 +11,7 @@ import Icon from "./Icon.vue";
  * device's own reason, rather than hidden. Hiding it would leave the operator
  * wondering whether the feature exists at all.
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import {
   type SettingSection,
@@ -27,6 +27,7 @@ import {
   resetSettings,
   restartDevice,
   revertCert,
+  runAcme,
   saveSettings,
   settingBlockedReason,
   findTelegramChats,
@@ -690,6 +691,35 @@ onMounted(async () => {
   }
 });
 
+/* Let's Encrypt over Tailscale: watched every two seconds while it runs. */
+const acme = computed(() => tls.value?.acme ?? null);
+let acmeTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function refreshTls() {
+  try {
+    tls.value = await getTlsStatus();
+  } catch {
+    /* keep what is shown */
+  }
+  clearTimeout(acmeTimer);
+  if (tls.value?.acme?.busy) acmeTimer = setTimeout(refreshTls, 2000);
+}
+onUnmounted(() => clearTimeout(acmeTimer));
+
+async function doRunAcme() {
+  try {
+    await runAcme();
+    if (tls.value?.acme) tls.value.acme.busy = true;
+    acmeTimer = setTimeout(refreshTls, 1000);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  }
+}
+
+function acmeDate(t: number): string {
+  return t ? new Date(t * 1000).toLocaleDateString() : "";
+}
+
 async function loadCertFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (file) certText.value = await file.text();
@@ -701,7 +731,7 @@ async function doInstallCert() {
   try {
     await installCert(certText.value);
     certText.value = "";
-    tls.value = { https: true, custom: true };
+    if (tls.value) tls.value = { ...tls.value, custom: true };
     toast.info("Certificate installed - the device is restarting to apply it");
   } catch (err) {
     toast.error(err instanceof Error ? err.message : String(err));
@@ -724,7 +754,7 @@ async function doRevertCert() {
   tlsBusy.value = true;
   try {
     await revertCert();
-    tls.value = { https: true, custom: false };
+    if (tls.value) tls.value = { ...tls.value, custom: false };
     toast.info("Reverting to the self-signed certificate - the device is restarting");
   } catch (err) {
     toast.error(err instanceof Error ? err.message : String(err));
@@ -1362,6 +1392,51 @@ async function doRevertCert() {
 
         <div v-if="currentSection === 'security'" class="firmware">
           <h3>Device certificate</h3>
+
+          <!-- Let's Encrypt for the tailnet name. Served only to whoever asks
+               for that name, so the local name and the IPs below are unchanged. -->
+          <div v-if="acme" class="acme">
+            <p class="setting-note">
+              <template v-if="acme.cert">
+                Over Tailscale the device serves a Let's Encrypt certificate:
+                <a :href="`https://${acme.cert}/`" class="mono">{{ acme.cert }}</a>
+                opens with nothing to import, until {{ acmeDate(acme.expires) }}.
+                It renews itself.
+                <template v-if="acme.staging"> (a test certificate - browsers do not trust it)</template>
+              </template>
+              <template v-else-if="!acme.enabled">
+                Over Tailscale the device can get a certificate every browser
+                trusts, from Let's Encrypt, for its tailnet name<template v-if="acme.name">
+                  <span class="mono">{{ acme.name }}</span></template>. Turn on
+                "Trusted certificate (Let's Encrypt)" under VPN, Tailscale.
+              </template>
+              <template v-else-if="!acme.tailscale">
+                Waiting for Tailscale to connect to get the Let's Encrypt certificate.
+              </template>
+              <template v-else-if="!acme.domain">
+                HTTPS certificates are off for this tailnet. Turn them on in the
+                Tailscale admin console, DNS page (MagicDNS has to be on too).
+              </template>
+              <template v-else>
+                No Let's Encrypt certificate yet for
+                <span class="mono">{{ acme.domain }}</span>.
+              </template>
+            </p>
+            <p v-if="acme.busy" class="setting-note">{{ acme.step }}...</p>
+            <p v-else-if="acme.error" class="setting-note acme-error">
+              {{ acme.error }}<template v-if="acme.nextTry">
+                Next try {{ new Date(acme.nextTry * 1000).toLocaleString() }}.</template>
+            </p>
+            <button
+              v-if="acme.enabled && acme.tailscale && acme.domain"
+              type="button"
+              class="btn btn-sm"
+              :disabled="acme.busy"
+              @click="doRunAcme"
+            >
+              {{ acme.busy ? "Working..." : acme.cert ? "Renew now" : "Get the certificate now" }}
+            </button>
+          </div>
 
           <template v-if="tls?.custom">
             <p class="setting-note">

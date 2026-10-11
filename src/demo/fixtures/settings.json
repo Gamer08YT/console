@@ -94,6 +94,7 @@
   "ts_control_port": 0,
   "ts_ctrl_tls": true,
   "ts_key_warn": 14,
+  "ts_cert": true,
   "mqtt_enable": true,
   "mqtt_host": "homeassistant.local",
   "mqtt_port": 1883,

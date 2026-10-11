@@ -770,6 +770,40 @@ export async function switchBootSlot(label: string): Promise<void> {
 export interface TlsStatus {
   https: boolean;
   custom: boolean;
+  /** Let's Encrypt over Tailscale; absent on older firmware. */
+  acme?: AcmeStatus | null;
+}
+
+/** The Let's Encrypt certificate for the tailnet name. Times are Unix seconds. */
+export interface AcmeStatus {
+  /** The ts_cert setting. */
+  enabled: boolean;
+  /** Tailscale is connected. */
+  tailscale: boolean;
+  /** The name Tailscale will help certify; "" when HTTPS certificates are off for the tailnet. */
+  domain: string;
+  /** The device's tailnet name. */
+  name: string;
+  busy: boolean;
+  step: string;
+  error: string;
+  /** The name on the certificate being served, "" for none. */
+  cert: string;
+  expires: number;
+  staging: boolean;
+  lastTry: number;
+  nextTry: number;
+}
+
+/** Get or renew the Let's Encrypt certificate now; it runs in the background. */
+export async function runAcme(staging = false): Promise<void> {
+  const res = await fetch("/api/v1/tls/acme", {
+    method: "POST",
+    headers: { ...CONSOLE_HEADER, "Content-Type": "application/json" },
+    body: JSON.stringify({ staging }),
+  });
+  if (res.status === 401) throw new Unauthorized();
+  if (!res.ok) throw new Error(await errorFromResponse(res, `could not start (${res.status})`));
 }
 
 export async function getTlsStatus(): Promise<TlsStatus> {

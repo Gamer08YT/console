@@ -69,6 +69,25 @@ function syncMedia() {
 /* Whether the demo is serving an "operator" certificate, so the TLS panel can be
    tried out (install flips it on, revert flips it off). No real restart happens. */
 let tlsCustom = false;
+/* A Let's Encrypt certificate for the made-up tailnet name, got 20 days ago. */
+let acmeIssued = Math.floor(Date.now() / 1000) - 20 * 86400;
+function demoAcme() {
+  const name = "espkvm.tail1a2b3c.ts.net";
+  return {
+    enabled: settings.ts_cert === true,
+    tailscale: true,
+    domain: name,
+    name,
+    busy: false,
+    step: "Done",
+    error: "",
+    cert: name,
+    expires: acmeIssued + 90 * 86400,
+    staging: false,
+    lastTry: acmeIssued,
+    nextTry: 0,
+  };
+}
 /* The demo's answer to "find chats" - nothing until the button is pressed. */
 let tgFind: Json = { state: "idle", error: "", bot: "", chats: [] };
 
@@ -412,7 +431,7 @@ async function route(
       case "/api/v1/system/coredump":
         return json({ error: "no crash dump" }, 404);
       case "/api/v1/tls":
-        return json({ https: true, custom: tlsCustom });
+        return json({ https: true, custom: tlsCustom, acme: demoAcme() });
       case "/api/v1/runbooks/status":
         return json(runbookStatus());
       case "/api/v1/cec":
@@ -567,6 +586,9 @@ async function route(
   }
   if (method === "POST") {
     switch (path) {
+      case "/api/v1/tls/acme":
+        acmeIssued = Math.floor(Date.now() / 1000);
+        return json({ status: "started" });
       case "/api/v1/settings/reset":
         settings = { ...(settingsFixture as Json) };
         return json(settings);
