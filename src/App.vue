@@ -751,12 +751,20 @@ async function measureDelay() {
  */
 const padAlone = computed(() => {
   const name = enumName(schema.value, values.value, "usb_pad") ?? "";
+  if (name === "xbox") return "xbox"; /* the original Xbox pad is always alone */
   return name.endsWith("_alone") ? name.replace("_alone", "") : null;
 });
-const padAloneLabel = computed(() => (padAlone.value === "xinput" ? "an Xbox 360 gamepad" : "a Switch gamepad"));
+const padAloneLabel = computed(() =>
+  padAlone.value === "xinput"
+    ? "an Xbox 360 gamepad"
+    : padAlone.value === "xbox"
+      ? "an original Xbox gamepad"
+      : "a Switch gamepad",
+);
 const bringingBack = ref(false);
 async function bringBackKeyboard() {
-  const index = enumIndex(schema.value, "usb_pad", padAlone.value ?? "off");
+  const back = padAlone.value === "xbox" ? "off" : padAlone.value;
+  const index = enumIndex(schema.value, "usb_pad", back ?? "off");
   if (index === null) return;
   bringingBack.value = true;
   try {

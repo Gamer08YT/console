@@ -221,7 +221,7 @@ export interface SystemInfo {
    */
   crashDumpBytes?: number;
   /** The gamepad the USB device carries (Settings -> Input -> Gamepad, from boot): "" none. */
-  usbPad?: "" | "switch" | "xinput";
+  usbPad?: "" | "switch" | "xinput" | "xbox";
   /** A battery-backed clock chip answered on the I2C bus. */
   rtc?: boolean;
   /** Which one: "DS3231", "PCF8563", "PCF85063", "PCF8523". */

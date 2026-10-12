@@ -38,7 +38,7 @@ import {
 import { useFloating } from "../ui/floating";
 import Icon from "./Icon.vue";
 
-const props = defineProps<{ control: Control; kind: "switch" | "xinput" }>();
+const props = defineProps<{ control: Control; kind: "switch" | "xinput" | "xbox" }>();
 const emit = defineEmits<{ close: []; look: ["window" | "overlay"] }>();
 
 const popup = ref<HTMLElement | null>(null);
@@ -70,7 +70,7 @@ const styleChoice = ref<LabelStyle | "">(
   })(),
 );
 const style = computed<LabelStyle>(
-  () => styleChoice.value || (props.kind === "xinput" ? "xbox" : "nintendo"),
+  () => styleChoice.value || (props.kind === "switch" ? "nintendo" : "xbox"),
 );
 const labels = computed(() => LABELS[style.value]);
 const keyFace = computed(() => keyFaces(style.value));
