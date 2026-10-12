@@ -11,7 +11,7 @@ import Icon from "./Icon.vue";
  * device's own reason, rather than hidden. Hiding it would leave the operator
  * wondering whether the feature exists at all.
  */
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 
 import {
   type SettingSection,
@@ -47,6 +47,7 @@ import { runRestart } from "../state/restart";
 import { TIME_ZONES, browserZone, zoneName, zoneOptions } from "../state/timezones";
 import { toast } from "../state/toasts";
 import TwoFactor from "./TwoFactor.vue";
+import ScreenLayout from "./ScreenLayout.vue";
 
 /* Groups that need something wired, and where the wiring is written up. */
 const GROUP_DOCS: Record<string, string> = {
@@ -68,6 +69,11 @@ const props = defineProps<{
   /** Finds where the captured screen sits on a multi-screen desktop and saves
       it; reports progress, resolves with what it found. */
   findScreen?: (progress: (text: string) => void) => Promise<string>;
+  /** The captured picture's size, to draw where it sits on the desktop. Two
+      numbers, not an object: a new object on every status poll would redraw
+      the whole panel and put the saved value back into a field being typed in. */
+  screenW?: number;
+  screenH?: number;
 }>();
 
 /* The "Find this screen" button under the several-screens settings. */
@@ -410,18 +416,26 @@ const displayRows = computed(() => {
 
 /*
  * The rows as the device groups them: a heading, then its settings. A setting
- * with no group of its own comes first, under no heading at all.
+ * with no group of its own comes first, under no heading at all. A group the
+ * table lists in two places (Pointer, Target) is gathered under one heading,
+ * where it first appears: two headings with one name would also give two
+ * blocks the same key, and Vue then patches the wrong inputs.
  */
 const grouped = computed(() => {
   const rowsNow = query.value.trim() ? searchHits.value : displayRows.value;
   const out: { name: string; rows: Setting[] }[] = [];
+  const byName = new Map<string, { name: string; rows: Setting[] }>();
   for (const row of rowsNow) {
     const name = query.value.trim()
       ? sectionTitle(row.section)
       : (row.group ?? "");
-    const last = out[out.length - 1];
-    if (last && last.name === name) last.rows.push(row);
-    else out.push({ name, rows: [row] });
+    let block = byName.get(name);
+    if (!block) {
+      block = { name, rows: [] };
+      byName.set(name, block);
+      out.push(block);
+    }
+    block.rows.push(row);
   }
   return out;
 });
@@ -473,6 +487,24 @@ const sectionBlocked = computed(() => {
 
 function blockedFor(s: Setting): string | null {
   return sectionBlocked.value ? null : settingBlockedReason(s, props.caps);
+}
+
+/*
+ * What is being typed into a field, by key, until it is saved. Every redraw of
+ * the panel puts the bound value back into an <input> - and the panel redraws
+ * whenever the saved values come back, so text typed into the next field while
+ * the last one was being saved went back to the old value (often 0). A field
+ * shows its draft while there is one. Number and text fields also stay enabled
+ * while another field saves: a field disabled under the cursor drops its focus
+ * and the keys typed into it.
+ */
+const drafts = reactive<Record<string, string>>({});
+function shown(key: string, saved: string): string {
+  return key in drafts ? drafts[key] : saved;
+}
+async function commit(key: string, value: number | string) {
+  await write(key, value);
+  delete drafts[key];
 }
 
 async function write(key: string, value: number | string | boolean) {
@@ -970,10 +1002,11 @@ async function doRevertCert() {
                   class="num-input"
                   :min="s.min"
                   :max="s.max"
-                  :value="Number(values[s.key] ?? 0)"
-                  :disabled="busy || !!sectionBlocked || !!blockedFor(s)"
+                  :value="shown(s.key, String(Number(values[s.key] ?? 0)))"
+                  :disabled="!!sectionBlocked || !!blockedFor(s)"
+                  @input="drafts[s.key] = ($event.target as HTMLInputElement).value"
                   @change="
-                    write(
+                    commit(
                       s.key,
                       Number(($event.target as HTMLInputElement).value),
                     )
@@ -1048,10 +1081,11 @@ async function doRevertCert() {
                   data-lpignore="true"
                   data-form-type="other"
                   :maxlength="s.maxLength"
-                  :value="String(values[s.key] ?? '')"
-                  :disabled="busy || !!sectionBlocked || !!blockedFor(s)"
+                  :value="shown(s.key, String(values[s.key] ?? ''))"
+                  :disabled="!!sectionBlocked || !!blockedFor(s)"
+                  @input="drafts[s.key] = ($event.target as HTMLInputElement).value"
                   @change="
-                    write(s.key, ($event.target as HTMLInputElement).value)
+                    commit(s.key, ($event.target as HTMLInputElement).value)
                   "
                 />
               </div>
@@ -1063,7 +1097,7 @@ async function doRevertCert() {
                 {{ s.help }}
               </p>
 
-              <p v-if="s.key === 'ptr_desk_w' && findScreen" class="setting-note">
+              <p v-if="s.key === 'ptr_scr_y' && findScreen" class="setting-note">
                 <button
                   type="button"
                   class="btn btn-sm"
@@ -1075,6 +1109,20 @@ async function doRevertCert() {
                 </button>
                 {{ screenResult }}
               </p>
+              <ScreenLayout
+                v-if="
+                  s.key === 'ptr_scr_y' &&
+                  Number(values.ptr_desk_w ?? 0) > 0 &&
+                  Number(values.ptr_desk_h ?? 0) > 0 &&
+                  (screenW ?? 0) > 0
+                "
+                :desk-w="Number(values.ptr_desk_w)"
+                :desk-h="Number(values.ptr_desk_h)"
+                :x="Number(values.ptr_scr_x ?? 0)"
+                :y="Number(values.ptr_scr_y ?? 0)"
+                :w="screenW ?? 0"
+                :h="screenH ?? 0"
+              />
 
               <p v-if="s.key === 'ui_haptic_level'" class="setting-note">
                 <button type="button" class="btn btn-sm" @click="hapticResult = hapticTry(s.choices?.[Number(values[s.key] ?? 0)])">

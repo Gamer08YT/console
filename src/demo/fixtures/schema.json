@@ -301,6 +301,54 @@
       "requires": "hid"
     },
     {
+      "key": "ptr_desk_w",
+      "section": "input",
+      "group": "Several screens",
+      "title": "Whole desktop width (px)",
+      "help": "Only for a target with more than one screen. The absolute pointer covers the whole desktop, not just the screen shown here, so the cursor runs off onto the other screen. Give the size of the whole desktop and where this screen sits in it, in the target's pixels - for two 1920x1080 screens side by side with this one on the right: 3840, 1080, 1920, 0. 0 here turns it off.",
+      "type": "int",
+      "min": 0,
+      "max": 32767,
+      "default": 0,
+      "requires": "hid"
+    },
+    {
+      "key": "ptr_desk_h",
+      "section": "input",
+      "group": "Several screens",
+      "title": "Whole desktop height (px)",
+      "help": "The height of the whole desktop. 0 means the same as this screen.",
+      "type": "int",
+      "min": 0,
+      "max": 32767,
+      "default": 0,
+      "requires": "hid"
+    },
+    {
+      "key": "ptr_scr_x",
+      "section": "input",
+      "group": "Several screens",
+      "title": "This screen's left edge (px)",
+      "help": "Where this screen starts, from the left of the whole desktop.",
+      "type": "int",
+      "min": 0,
+      "max": 32767,
+      "default": 0,
+      "requires": "hid"
+    },
+    {
+      "key": "ptr_scr_y",
+      "section": "input",
+      "group": "Several screens",
+      "title": "This screen's top edge (px)",
+      "help": "Where this screen starts, from the top of the whole desktop.",
+      "type": "int",
+      "min": 0,
+      "max": 32767,
+      "default": 0,
+      "requires": "hid"
+    },
+    {
       "key": "mouse_sens",
       "section": "input",
       "group": "Pointer",
@@ -452,6 +500,72 @@
       "maxLength": 48,
       "default": "UTC0",
       "requires": "scheduler"
+    },
+    {
+      "key": "rtc_chip",
+      "section": "system",
+      "group": "Clock",
+      "title": "Clock chip",
+      "help": "A battery-backed clock module keeps the time through a restart with no network. Auto finds a DS3231 (or DS3231M, DS3232) and a PCF8563 or BM8563. A PCF85063 or PCF8523 shares an address with something else and must be named here. Off leaves the bus alone. Only the DS3231 has been tried on hardware.",
+      "type": "enum",
+      "choices": [
+        "Auto",
+        "Off",
+        "DS3231",
+        "PCF8563 / BM8563",
+        "PCF85063",
+        "PCF8523"
+      ],
+      "default": 0,
+      "reboot": true
+    },
+    {
+      "key": "rtc_bus",
+      "section": "system",
+      "group": "Clock",
+      "title": "Clock chip wiring",
+      "help": "Where the module is wired. The capture board's I2C is pins 3 (SDA) and 5 (SCL) of the 40-pin header on most boards, and a DS3231 for Raspberry Pi plugs straight on there. Own pins puts it on a second I2C bus.",
+      "type": "enum",
+      "choices": [
+        "The capture board's I2C",
+        "Its own pins"
+      ],
+      "default": 0,
+      "reboot": true
+    },
+    {
+      "key": "rtc_sda",
+      "section": "system",
+      "group": "Clock",
+      "title": "Clock chip SDA",
+      "help": "The data line of the clock module's own bus.",
+      "type": "int",
+      "min": -1,
+      "max": 54,
+      "default": -1,
+      "reboot": true,
+      "pin": true,
+      "showIf": {
+        "key": "rtc_bus",
+        "eq": 1
+      }
+    },
+    {
+      "key": "rtc_scl",
+      "section": "system",
+      "group": "Clock",
+      "title": "Clock chip SCL",
+      "help": "The clock line of the clock module's own bus.",
+      "type": "int",
+      "min": -1,
+      "max": 54,
+      "default": -1,
+      "reboot": true,
+      "pin": true,
+      "showIf": {
+        "key": "rtc_bus",
+        "eq": 1
+      }
     },
     {
       "key": "schedules_json",
@@ -1651,6 +1765,32 @@
         "key": "disp_type",
         "eq": 2
       }
+    },
+    {
+      "key": "disp_sda",
+      "section": "display",
+      "group": "Wiring",
+      "title": "OLED SDA",
+      "help": "I2C data GPIO for an OLED on a bus of its own, such as the Grove port of the M5Stack Unit PoE-P4. -1 (None) puts the OLED on the capture chip's bus, where most boards have it. Set both SDA and SCL, or neither.",
+      "type": "int",
+      "min": -1,
+      "max": 54,
+      "default": -1,
+      "reboot": true,
+      "pin": true
+    },
+    {
+      "key": "disp_scl",
+      "section": "display",
+      "group": "Wiring",
+      "title": "OLED SCL",
+      "help": "I2C clock GPIO for an OLED on a bus of its own. -1 (None) puts it on the capture chip's bus.",
+      "type": "int",
+      "min": -1,
+      "max": 54,
+      "default": -1,
+      "reboot": true,
+      "pin": true
     },
     {
       "key": "disp_bl",

@@ -2737,6 +2737,8 @@ const LED_BITS: Array<[number, string]> = [
         :ts="system?.ts"
         :firmware="system?.version"
         :find-screen="findThisScreen"
+        :screen-w="status?.width ?? 0"
+        :screen-h="status?.height ?? 0"
         @values="values = $event"
         @password-changed="onPasswordChanged"
       />
