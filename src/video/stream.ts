@@ -25,6 +25,10 @@ const HEADER_LEN = 12;
 const MAGIC = 0x4b;
 const TYPE_JPEG = 1;
 const TYPE_H264 = 2;
+/* The device says it takes frame acks; older firmware would read each ack as
+   a keyframe request, so none are sent until this arrives. */
+const MSG_VIDEO_ACKS = 0x85;
+const MSG_VIDEO_ACK = 0x09;
 
 /** How long to wait for the first frame before deciding the channel is dead. */
 const FIRST_FRAME_TIMEOUT_MS = 2500;
@@ -144,6 +148,8 @@ export class VideoStream {
   #lastMeta = { width: 0, height: 0, sequence: 0, pts: 0 };
   /** performance.now() of the last keyframe we asked the device for. */
   #lastResyncAt = 0;
+  /** The device takes frame acks (see MSG_VIDEO_ACKS). */
+  #acks = false;
   #onVisibility = () => this.#visibilityChanged();
 
   constructor(handlers: Handlers) {
@@ -199,6 +205,7 @@ export class VideoStream {
     }
     ws.binaryType = "arraybuffer";
     this.#ws = ws;
+    this.#acks = false;
 
     ws.onopen = () => {
       /* Subscribing happens on our first message: the device cannot send
@@ -230,7 +237,12 @@ export class VideoStream {
     /* A stopped stream's socket still delivers what was in flight; a keyframe
        there would build a decoder nobody closes. */
     if (this.#stopped) return;
-    if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength <= HEADER_LEN) return;
+    if (!(ev.data instanceof ArrayBuffer)) return;
+    if (ev.data.byteLength === 1 && new Uint8Array(ev.data)[0] === MSG_VIDEO_ACKS) {
+      this.#acks = true;
+      return;
+    }
+    if (ev.data.byteLength <= HEADER_LEN) return;
     const view = new DataView(ev.data);
     if (view.getUint8(0) !== MAGIC) return;
     const type = view.getUint8(1);
@@ -246,6 +258,14 @@ export class VideoStream {
       sequence: view.getUint32(6, true),
       pts: view.getUint16(10, true),
     };
+    /* Acked on arrival: the device then keeps two frames on the way rather
+       than a full buffer of old ones, so a slow link shows a fresh picture. */
+    if (this.#acks && this.#ws?.readyState === WebSocket.OPEN) {
+      const ack = new Uint8Array(5);
+      ack[0] = MSG_VIDEO_ACK;
+      new DataView(ack.buffer).setUint32(1, this.#lastMeta.sequence, true);
+      this.#ws.send(ack);
+    }
 
     if (type === TYPE_JPEG) {
       this.#resetDecoder();
