@@ -77,6 +77,7 @@ import {
 } from "./state/device";
 import { loadSession, logout, type SessionState } from "./state/auth";
 import { toast } from "./state/toasts";
+import { copyToClipboard } from "./ui/clipboard";
 
 type PanelId = "input" | "media" | "automation" | "captures" | null;
 
@@ -110,6 +111,14 @@ const storage = ref<StorageInfo | null>(null);
 /* Wake-on-LAN: the target MAC is a setting; the button lives in PowerWidget. */
 const wolMac = computed(() => String(values.value.pwr_wol_mac ?? "").trim());
 const ready = ref(false);
+/* Capabilities follow settings (Allow WebRTC, for one), so read them again
+   whenever the settings change. */
+watch(values, () => {
+  if (!ready.value) return;
+  loadCapabilities()
+    .then((c) => (caps.value = c))
+    .catch(() => {});
+});
 const loadError = ref<string | null>(null);
 const session = ref<SessionState | null>(null);
 /* Nothing is loaded until the device says who is asking. */
@@ -227,38 +236,6 @@ async function copyScreenText() {
   }
 }
 
-/*
- * The clipboard, with the old way kept as the fallback.
- *
- * navigator.clipboard does not exist outside a secure context, and the console
- * is served over plain HTTP in hotspot mode - which is exactly the situation
- * where someone is reading a serial number off a BIOS screen and wants to paste
- * it somewhere. The textarea trick still works there.
- */
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (window.isSecureContext && navigator.clipboard) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    /* fall through and try the old way */
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 /*
  * A key pressed in text mode is somebody walking a menu, and the menu answers
@@ -2183,7 +2160,8 @@ const LED_BITS: Array<[number, string]> = [
             :video-blocked="videoBlocked"
             :paused="paused || updateHoldsStream"
             :text-layer="selectingText || textView ? screenText : null"
-          :text-view="textView"
+            :text-view="textView"
+            :webrtc="Boolean(caps.webrtc?.active)"
             :pause-note="
               updateHoldsStream
                 ? 'The picture is back the moment the update is done - it gives up its connection so the image gets the device to itself.'

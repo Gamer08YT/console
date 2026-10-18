@@ -18,7 +18,8 @@ import { textSpans } from "../screen/textSpans";
 import { drawDemoBox, type DemoBoxView } from "./demoBox";
 import { reconnectSource, type ScreenText, type VideoStatus } from "../state/device";
 import { pictureRect } from "../video/picture";
-import { VideoStream } from "../video/stream";
+import { RtcStream, rtcSupported } from "../video/rtcStream";
+import { VideoStream, type Handlers } from "../video/stream";
 import Icon from "./Icon.vue";
 
 const props = defineProps<{
@@ -48,6 +49,8 @@ const props = defineProps<{
    * setting.
    */
   textView?: boolean;
+  /** The device lets this console take H.264 over WebRTC. */
+  webrtc?: boolean;
 }>();
 
 const emit = defineEmits<{ surface: [HTMLElement | null]; "open-serial": []; wake: [] }>();
@@ -69,7 +72,15 @@ const streamUrl = ref("/stream");
  */
 const imgSrc = computed(() => (useWebsocket.value ? undefined : streamUrl.value));
 
-let stream: VideoStream | null = null;
+let stream: VideoStream | RtcStream | null = null;
+/* WebRTC failed on this page; the WebSocket carries the picture until the
+   codec changes. Going back and forth would make the picture blink. */
+let rtcFailed = false;
+
+/** Take the picture over WebRTC: H.264 only, and only where both ends can. */
+function wantRtc(): boolean {
+  return !rtcFailed && Boolean(props.webrtc) && props.status?.codec === "h264" && rtcSupported();
+}
 let ctx: CanvasRenderingContext2D | null = null;
 
 /* Demo build only (static site at /demo/): there is no device, so the "screen"
@@ -952,7 +963,7 @@ function startStream() {
   stream?.stop();
   /* Whatever the last attempt could not play, this one has not failed yet. */
   codecError.value = null;
-  stream = new VideoStream({
+  const handlers: Handlers = {
     onFrame({ image, width, height }) {
       const el = canvas.value;
       if (!el) {
@@ -1008,7 +1019,19 @@ function startStream() {
       codecError.value = reason;
       loaded.value = false;
     },
-  });
+  };
+  if (wantRtc()) {
+    stream = new RtcStream({
+      ...handlers,
+      onFallback(reason, worked) {
+        console.warn(`WebRTC video: ${reason}; ${worked ? "starting again" : "using the WebSocket"}`);
+        if (!worked) rtcFailed = true;
+        startStream();
+      },
+    });
+  } else {
+    stream = new VideoStream(handlers);
+  }
 }
 
 watch(
@@ -1096,14 +1119,20 @@ watch(failed, (isFailed) => {
  * that showed the fault.
  */
 watch(
-  () => [props.status?.codec, props.paused] as const,
-  ([codec]) => {
+  () => [props.status?.codec, props.paused, props.webrtc] as const,
+  ([codec], old) => {
     if (DEMO || props.paused || !codec) return;
     if (codec !== "mjpeg" && !useWebsocket.value) {
       failed.value = false;
       loaded.value = false;
       useWebsocket.value = true;
+      return;
     }
+    /* A new codec gives WebRTC another chance. */
+    if (old && old[0] && codec !== old[0]) rtcFailed = false;
+    /* WebRTC carries H.264 only, and the device may allow it or not: move to
+       whichever transport fits now. */
+    if (useWebsocket.value && stream && stream instanceof RtcStream !== wantRtc()) startStream();
   },
   { immediate: true },
 );

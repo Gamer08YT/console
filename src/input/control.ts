@@ -30,6 +30,7 @@ const MSG_RELEASE_ALL = 0x05;
 const MSG_PING = 0x06;
 const MSG_TAKEOVER = 0x07;
 const MSG_PAD = 0x08;
+const MSG_PONG = 0x82;
 const MSG_STATUS = 0x81;
 const MSG_CONTROL = 0x83;
 const MSG_UPDATE = 0x84;
@@ -37,6 +38,13 @@ const MSG_UPDATE = 0x84;
 /* How often to poll control/target state, so a viewer notices the session was
    freed or taken without needing to interact. */
 const PING_INTERVAL_MS = 2500;
+
+/*
+ * The input channel's round trip: a ping to the device and its pong back, on
+ * the socket keys and the mouse take. Smoothed; read by the Video readout, so a
+ * slow pointer can be told apart from a slow picture.
+ */
+export const inputRtt = { ms: 0 };
 
 export interface TargetState {
   /** The target machine has enumerated our USB device. */
@@ -126,14 +134,20 @@ export class Control {
          target and control state rather than showing blank indicators until
          something happens to change them. Repeat on a timer so a viewer learns
          the session was freed or taken over without having to interact. */
-      this.#send(new Uint8Array([MSG_PING]));
-      this.#ping = window.setInterval(() => this.#send(new Uint8Array([MSG_PING])), PING_INTERVAL_MS);
+      this.#sendPing();
+      this.#ping = window.setInterval(() => this.#sendPing(), PING_INTERVAL_MS);
     };
 
     ws.onmessage = (ev) => {
       if (!(ev.data instanceof ArrayBuffer)) return;
       const b = new Uint8Array(ev.data);
-      if (b[0] === MSG_STATUS && b.length >= 3) {
+      if (b[0] === MSG_PONG) {
+        if (this.#pingAt) {
+          const d = performance.now() - this.#pingAt;
+          inputRtt.ms = inputRtt.ms ? inputRtt.ms * 0.7 + d * 0.3 : d;
+          this.#pingAt = 0;
+        }
+      } else if (b[0] === MSG_STATUS && b.length >= 3) {
         this.#handlers.onTarget({
           attached: (b[1] & 1) !== 0,
           busAlive: (b[1] & 2) !== 0,
@@ -182,6 +196,14 @@ export class Control {
   /** Ask the device to make this client the controlling one, demoting any other. */
   takeControl() {
     this.#send(new Uint8Array([MSG_TAKEOVER]));
+  }
+
+  /* performance.now() of the ping waiting for its pong; 0 when none is. */
+  #pingAt = 0;
+
+  #sendPing() {
+    this.#pingAt = performance.now();
+    this.#send(new Uint8Array([MSG_PING]));
   }
 
   #send(data: Uint8Array) {

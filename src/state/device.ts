@@ -492,6 +492,34 @@ export async function saveSettings(patch: Values): Promise<Values> {
   return body as Values;
 }
 
+/* ---- WebRTC video ------------------------------------------------------ */
+
+/** The device's answer to a WebRTC offer, and the session's number. */
+export interface WebrtcAnswer {
+  id: number;
+  sdp: string;
+}
+
+export async function webrtcOffer(sdp: string): Promise<WebrtcAnswer> {
+  const res = await fetch("/api/v1/video/webrtc", {
+    method: "POST",
+    headers: { ...CONSOLE_HEADER, "Content-Type": "application/json" },
+    body: JSON.stringify({ sdp }),
+  });
+  if (res.status === 401) throw new Unauthorized();
+  if (!res.ok) throw new Error(await errorFromResponse(res, `WebRTC offer failed (${res.status})`));
+  return (await res.json()) as WebrtcAnswer;
+}
+
+/** Best effort, and it survives the page going away. */
+export function webrtcClose(id: number): void {
+  void fetch(`/api/v1/video/webrtc?id=${id}`, {
+    method: "DELETE",
+    headers: CONSOLE_HEADER,
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
 /* ---- runbooks ---------------------------------------------------------- */
 
 export type RunbookState = "idle" | "running" | "done" | "failed" | "stopped";

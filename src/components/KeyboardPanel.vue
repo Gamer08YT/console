@@ -475,7 +475,18 @@ const heldNames = computed(() => {
   return names.join(" + ");
 });
 
+/* A letter key, in any layout: one character that has a case. */
+function isLetter(text: string): boolean {
+  return [...text].length === 1 && text.toLowerCase() !== text.toUpperCase();
+}
+
 function label(key: Key): string {
+  if (isLetter(key.text)) {
+    /* Shown as it would type: Shift capitalises, and so does Caps Lock when
+       the target has lit its LED; both at once cancel out. */
+    const caps = (props.leds & 2) !== 0;
+    return shifted.value !== caps ? key.text.toUpperCase() : key.text.toLowerCase();
+  }
   return shifted.value && key.shifted ? key.shifted : key.text;
 }
 

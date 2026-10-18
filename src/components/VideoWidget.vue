@@ -22,7 +22,10 @@ import Icon from "./Icon.vue";
 import { computed, onUnmounted, ref } from "vue";
 
 import type { VideoStatus } from "../state/device";
-import { browserLag } from "../video/stream";
+import { toast } from "../state/toasts";
+import { copyToClipboard } from "../ui/clipboard";
+import { inputRtt } from "../input/control";
+import { browserLag, transport } from "../video/stream";
 
 const props = defineProps<{
   status: VideoStatus | null;
@@ -60,10 +63,38 @@ function pickCodec(codec: "mjpeg" | "h264") {
 
 /* The browser's share, sampled while the readout is open. */
 const browserMs = ref(0);
-const lagTimer = setInterval(() => (browserMs.value = Math.round(browserLag.ms)), 1000);
+const via = ref("");
+const rtcBufferMs = ref(0);
+const rtcLost = ref(0);
+const rtcNacks = ref(0);
+const rtcRtt = ref(0);
+const inputMs = ref(0);
+const lagTimer = setInterval(() => {
+  browserMs.value = Math.round(browserLag.ms);
+  via.value = transport.via;
+  rtcBufferMs.value = Math.round(transport.bufferMs);
+  rtcLost.value = transport.lost;
+  rtcNacks.value = transport.nacks;
+  rtcRtt.value = Math.round(transport.rttMs);
+  inputMs.value = Math.round(inputRtt.ms);
+}, 1000);
 onUnmounted(() => clearInterval(lagTimer));
 
 const open = ref(false);
+const facts = ref<HTMLElement | null>(null);
+
+/* What the readout shows, as text, for pasting into a bug report or a chat. */
+async function copyFacts() {
+  const lines = [...(facts.value?.querySelectorAll(".fact") ?? [])].map((f) => {
+    const dt = f.querySelector("dt")?.textContent?.trim() ?? "";
+    const dd = f.querySelector("dd")?.textContent?.trim() ?? "";
+    return `${dt}: ${dd}`;
+  });
+  if (props.latency) lines.push(`Measured delay: ${props.latency}`);
+  if (await copyToClipboard(lines.join("\n"))) toast.info("Copied to clipboard");
+  else toast.error("The browser would not give this page the clipboard");
+}
+
 const signal = computed(() => Boolean(props.status?.signal));
 
 /* The status bar scrolls its own contents, so anything absolute inside it is
@@ -146,6 +177,16 @@ function rate(kbps: number): string {
         <div class="vw-head">
           <h3>Video</h3>
           <button
+            v-if="status"
+            type="button"
+            class="btn btn-sm btn-icon btn-quiet vw-copy"
+            aria-label="Copy these figures"
+            title="Copy these figures"
+            @click="copyFacts"
+          >
+            <Icon name="copy" :size="15" />
+          </button>
+          <button
             type="button"
             class="btn btn-sm btn-icon btn-quiet"
             aria-label="Close"
@@ -204,7 +245,7 @@ function rate(kbps: number): string {
           </span>
         </label>
 
-        <dl v-if="status" class="facts">
+        <dl v-if="status" ref="facts" class="facts">
           <div class="fact">
             <dt>Signal</dt>
             <dd class="mono">{{ status.signal ? "locked" : "absent" }}</dd>
@@ -248,6 +289,34 @@ function rate(kbps: number): string {
               Through the device
             </dt>
             <dd class="mono">{{ status.lagMs.total }} ms ({{ status.lagMs.totalMax }})</dd>
+          </div>
+          <div v-if="open && via" class="fact">
+            <dt title="WebRTC (UDP) when the device allows it and the codec is H.264, else the WebSocket">
+              Video over
+            </dt>
+            <dd class="mono">{{ via }}</dd>
+          </div>
+          <div v-if="open && via === 'WebRTC'" class="fact">
+            <dt title="How long this browser holds a frame before showing it">Buffer</dt>
+            <dd class="mono">{{ rtcBufferMs }} ms</dd>
+          </div>
+          <div v-if="open && via === 'WebRTC'" class="fact">
+            <dt title="Packets lost on the way since WebRTC started, and how many times this browser asked for one again; most come back on the second try">
+              Lost, asked again
+            </dt>
+            <dd class="mono">{{ rtcLost }}, {{ rtcNacks }}</dd>
+          </div>
+          <div v-if="open && via === 'WebRTC' && rtcRtt > 0" class="fact">
+            <dt title="Round trip from this browser to the device and back, over the path WebRTC chose">
+              Round trip
+            </dt>
+            <dd class="mono">{{ rtcRtt }} ms</dd>
+          </div>
+          <div v-if="open && inputMs > 0" class="fact">
+            <dt title="A ping from this browser to the device and back, on the socket the keys and the mouse take">
+              Input round trip
+            </dt>
+            <dd class="mono">{{ inputMs }} ms</dd>
           </div>
           <div v-if="open && browserMs > 0" class="fact">
             <dt title="From a frame arriving in this browser until it is ready to draw (decoding), smoothed">
@@ -426,6 +495,10 @@ function rate(kbps: number): string {
 
 .vw-head h3 {
   margin: 0;
+}
+
+.vw-copy {
+  margin-left: auto;
 }
 
 

@@ -70,6 +70,13 @@ function noteLag(arrivedMs: number) {
   browserLag.ms = browserLag.ms ? browserLag.ms * 0.9 + d * 0.1 : d;
 }
 
+/**
+ * Which way the picture last came, for the Video readout. Over WebRTC also how
+ * long the browser held frames before showing them, the packets lost on the way
+ * and asked for again, and the round trip, from its own statistics.
+ */
+export const transport = { via: "", bufferMs: 0, lost: 0, nacks: 0, rttMs: 0 };
+
 export type Drawable = (ImageBitmap | VideoFrame) & { close(): void };
 
 export interface FrameInfo {
@@ -81,7 +88,7 @@ export interface FrameInfo {
   pts: number;
 }
 
-interface Handlers {
+export interface Handlers {
   onFrame(frame: FrameInfo): void;
   /** The channel produced nothing usable; the caller should show the fallback. */
   onUnavailable(reason: string): void;
@@ -286,6 +293,7 @@ export class VideoStream {
       const blob = new Blob([buffer.slice(HEADER_LEN)], { type: "image/jpeg" });
       const bitmap = await createImageBitmap(blob);
       noteLag(arrived);
+      transport.via = "WebSocket";
       this.#handlers.onFrame({ image: bitmap, ...meta });
     } catch {
       /* A corrupt frame is not worth reporting; the next one will do. */
@@ -397,6 +405,7 @@ export class VideoStream {
           this.#stallRebuilds = 0;
           this.#decoderErrors = 0;
           const meta = this.#lastMeta;
+          transport.via = "WebSocket";
           this.#handlers.onFrame({
             image: frame,
             width: frame.displayWidth || meta.width,
