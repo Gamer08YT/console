@@ -8,6 +8,10 @@
  * Seeking asks the device for the file from a byte offset (an HTTP Range) and
  * starts at the next keyframe, so it lands within a couple of seconds of the
  * spot. Times shown are the stream's own, so subtitles line up.
+ *
+ * Sound, when the recording has it, is decoded as it is read and played on an
+ * AudioContext against the picture's clock: each piece is queued a moment
+ * before it is due, so a pause or a seek only has to stop what is queued.
  */
 import { codecFromSps, inspectAnnexB } from "./stream";
 import { TS_PACKET, TsDemuxer, lastPts, type AccessUnit } from "./tsDemux";
@@ -29,6 +33,15 @@ const DECODED_MAX = 12;
 /* After a dropped connection, read again from this far back, so the frame that
    was cut in half arrives whole. */
 const RESUME_BACK = 2 * 1024 * 1024;
+/* Sound is handed to the AudioContext this far ahead of the picture's clock. */
+const AUDIO_LEAD_US = 300_000;
+/* Pieces that follow each other in the file are played back to back. The
+   picture's clock moves in uneven steps, and placing each 21 ms piece by it
+   left gaps and overlaps the ear hears as a tremble. Only when the sound has
+   drifted this far from the picture is it placed by the clock again. */
+const AUDIO_DRIFT_S = 0.05;
+/* Closer than this to where the last piece ended, the next one follows it. */
+const AUDIO_JOIN_US = 2_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const usOf = (pts90k: number) => Math.round((pts90k * 1000) / 90);
@@ -47,6 +60,15 @@ export class TsPlayer {
   #frames: VideoFrame[] = [];
   #submittedUs = -1; /* newest frame handed to the decoder */
   #eof = false;
+
+  #ctx: AudioContext | null = null;
+  #audioDecoder: AudioDecoder | null = null;
+  #audioFormat = ""; /* rate and channels the decoder was set up for */
+  #audioSubmittedUs = -1;
+  #sound: Array<{ us: number; buf: AudioBuffer }> = []; /* decoded, not yet queued */
+  #playing: Array<{ us: number; buf: AudioBuffer; src: AudioBufferSourceNode }> = [];
+  #soundEndUs = -1; /* where the last queued piece ends, in media time; -1 = none */
+  #soundEndAt = 0; /* and in AudioContext time */
 
   #firstUs = 0;
   #durationS = 0;
@@ -77,7 +99,7 @@ export class TsPlayer {
     try {
       const head = await this.#range(0, 256 * 1024 - 1);
       const d = new TsDemuxer();
-      const first = [...d.push(head), ...d.flush()][0];
+      const first = [...d.push(head), ...d.flush()].find((au) => !au.audio);
       if (!first) throw new Error("no video in this file");
       this.#firstUs = usOf(first.pts);
       let last = lastPts(await this.#range(-256 * 1024));
@@ -106,6 +128,7 @@ export class TsPlayer {
 
   pause(): void {
     this.#paused = true;
+    this.#silence(true);
     this.#ev.onPlaying(false);
   }
 
@@ -127,6 +150,8 @@ export class TsPlayer {
     cancelAnimationFrame(this.#raf);
     this.#decoder?.close();
     this.#decoder = null;
+    void this.#ctx?.close().catch(() => undefined);
+    this.#ctx = null;
   }
 
   #restart(): void {
@@ -140,6 +165,12 @@ export class TsPlayer {
     this.#codec = "";
     this.#needKey = true;
     this.#submittedUs = -1;
+    this.#silence(false);
+    this.#sound = [];
+    if (this.#audioDecoder && this.#audioDecoder.state !== "closed") this.#audioDecoder.close();
+    this.#audioDecoder = null;
+    this.#audioFormat = "";
+    this.#audioSubmittedUs = -1;
     this.#eof = false;
     this.#ended = false;
     this.#clockUs = -1;
@@ -190,7 +221,9 @@ export class TsPlayer {
       try {
         for (;;) {
           while (gen === this.#gen && pending.length && !this.#busy()) {
-            this.#decode(pending.shift() as AccessUnit);
+            const au = pending.shift() as AccessUnit;
+            if (au.audio) this.#decodeAudio(au);
+            else this.#decode(au);
           }
           if (gen !== this.#gen) {
             void reader.cancel();
@@ -251,6 +284,104 @@ export class TsPlayer {
     );
   }
 
+  #decodeAudio(au: AccessUnit): void {
+    if (typeof AudioDecoder === "undefined") return;
+    const us = usOf(au.pts);
+    const d = au.data;
+    if (us <= this.#audioSubmittedUs || d.length < 7 || d[0] !== 0xff) return;
+    /* The ADTS header says the rate and channels; the decoder takes ADTS as it is. */
+    const rates = [
+      96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
+    ];
+    const rate = rates[(d[2] >> 2) & 0x0f];
+    const channels = ((d[2] & 1) << 2) | (d[3] >> 6);
+    if (!rate || !channels) return;
+    const format = `${rate}/${channels}`;
+    const old = this.#audioDecoder;
+    if (format !== this.#audioFormat || !old || old.state === "closed") {
+      if (old && old.state !== "closed") old.close();
+      this.#audioDecoder = null;
+      this.#audioFormat = format;
+      const gen = this.#gen;
+      try {
+        const decoder = new AudioDecoder({
+          output: (data) => this.#onSound(gen, data),
+          error: () => undefined, /* the picture plays on without it */
+        });
+        decoder.configure({ codec: "mp4a.40.2", sampleRate: rate, numberOfChannels: channels });
+        this.#audioDecoder = decoder;
+      } catch {
+        return;
+      }
+    }
+    const decoder = this.#audioDecoder;
+    if (!decoder) return;
+    this.#audioSubmittedUs = us;
+    decoder.decode(new EncodedAudioChunk({ type: "key", timestamp: us, data: d }));
+  }
+
+  #onSound(gen: number, data: AudioData): void {
+    if (gen !== this.#gen) {
+      data.close();
+      return;
+    }
+    this.#ctx ??= new AudioContext({ latencyHint: "playback" });
+    const buf = this.#ctx.createBuffer(data.numberOfChannels, data.numberOfFrames, data.sampleRate);
+    for (let c = 0; c < data.numberOfChannels; c++) {
+      const plane = new Float32Array(data.numberOfFrames);
+      data.copyTo(plane, { planeIndex: c, format: "f32-planar" });
+      buf.copyToChannel(plane, c);
+    }
+    this.#sound.push({ us: data.timestamp, buf });
+    data.close();
+  }
+
+  /* Stop what is queued; on a pause, keep what has not played for later. */
+  #silence(keep: boolean): void {
+    const media = this.#shownUs;
+    for (const p of this.#playing) {
+      p.src.onended = null;
+      p.src.stop();
+    }
+    if (keep) {
+      const back = this.#playing.filter((p) => p.us >= media).map(({ us, buf }) => ({ us, buf }));
+      this.#sound = [...back, ...this.#sound];
+    }
+    this.#playing = [];
+    this.#soundEndUs = -1;
+  }
+
+  /* Hand the AudioContext what falls due soon, at the picture's clock. */
+  #queueSound(media: number): void {
+    const ctx = this.#ctx;
+    if (!ctx || this.#paused || media < 0) return;
+    if (ctx.state === "suspended") void ctx.resume();
+    while (this.#sound.length && this.#sound[0].us <= media + AUDIO_LEAD_US) {
+      const { us, buf } = this.#sound.shift() as { us: number; buf: AudioBuffer };
+      const now = ctx.currentTime;
+      let at = now + (us - media) / 1e6;
+      if (
+        this.#soundEndUs >= 0 &&
+        Math.abs(us - this.#soundEndUs) < AUDIO_JOIN_US &&
+        Math.abs(this.#soundEndAt - at) < AUDIO_DRIFT_S
+      ) {
+        at = this.#soundEndAt;
+      }
+      if (at + buf.duration <= now) continue; /* already past */
+      this.#soundEndUs = us + buf.duration * 1e6;
+      this.#soundEndAt = at + buf.duration;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(Math.max(at, now), at < now ? now - at : 0);
+      const entry = { us, buf, src };
+      src.onended = () => {
+        this.#playing = this.#playing.filter((p) => p !== entry);
+      };
+      this.#playing.push(entry);
+    }
+  }
+
   #configure(codec: string): void {
     if (this.#decoder && this.#decoder.state !== "closed") this.#decoder.close();
     const gen = this.#gen;
@@ -284,6 +415,8 @@ export class TsPlayer {
     }
     const media = this.#paused || this.#clockUs < 0 ? this.#clockUs : this.#clockUs + (now - this.#clockAt) * 1000;
 
+    this.#queueSound(media);
+
     let show: VideoFrame | null = null;
     while (frames.length && frames[0].timestamp <= media) {
       show?.close();
@@ -314,6 +447,7 @@ export class TsPlayer {
     const starved = !this.#paused && !this.#eof && drained && this.#clockUs >= 0 && media - this.#shownUs > 250_000;
     if (starved) {
       this.#clockUs = -1;
+      this.#silence(true);
     }
     const waiting = starved || (!this.#paused && this.#clockUs < 0 && !this.#ended);
     if (waiting !== this.#waiting) {

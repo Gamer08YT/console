@@ -16,9 +16,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import { textSpans } from "../screen/textSpans";
 import { drawDemoBox, type DemoBoxView } from "./demoBox";
+import type { Zoom } from "../input/useTouch";
 import { reconnectSource, type ScreenText, type VideoStatus } from "../state/device";
 import { pictureRect } from "../video/picture";
 import { RtcStream, rtcSupported } from "../video/rtcStream";
+import { playersOpen, WsSound, wsSoundSupported } from "../video/sound";
 import { VideoStream, type Handlers } from "../video/stream";
 import Icon from "./Icon.vue";
 
@@ -51,6 +53,12 @@ const props = defineProps<{
   textView?: boolean;
   /** The device lets this console take H.264 over WebRTC. */
   webrtc?: boolean;
+  /** The device has the target's sound. */
+  audio?: boolean;
+  /** Pinch zoom in touch mode; see useTouch. */
+  zoom?: Zoom;
+  /** The operator wants to hear it. */
+  sound?: boolean;
 }>();
 
 const emit = defineEmits<{ surface: [HTMLElement | null]; "open-serial": []; wake: [] }>();
@@ -73,6 +81,7 @@ const streamUrl = ref("/stream");
 const imgSrc = computed(() => (useWebsocket.value ? undefined : streamUrl.value));
 
 let stream: VideoStream | RtcStream | null = null;
+let wsSound: WsSound | null = null;
 /* WebRTC failed on this page; the WebSocket carries the picture until the
    codec changes. Going back and forth would make the picture blink. */
 let rtcFailed = false;
@@ -1023,6 +1032,7 @@ function startStream() {
   if (wantRtc()) {
     stream = new RtcStream({
       ...handlers,
+      audio: Boolean(props.audio),
       onFallback(reason, worked) {
         console.warn(`WebRTC video: ${reason}; ${worked ? "starting again" : "using the WebSocket"}`);
         if (!worked) rtcFailed = true;
@@ -1032,7 +1042,33 @@ function startStream() {
   } else {
     stream = new VideoStream(handlers);
   }
+  applySound();
 }
+
+/*
+ * The sound comes with the picture when that is over WebRTC, and over a
+ * socket of its own otherwise - MJPEG, the WebSocket, or text mode with no
+ * picture at all. Quiet while a recording plays.
+ */
+function applySound() {
+  const want =
+    !DEMO &&
+    Boolean(props.sound) &&
+    Boolean(props.audio) &&
+    (!props.paused || Boolean(props.textView)) &&
+    playersOpen.value === 0;
+  const rtc = stream instanceof RtcStream ? stream : null;
+  rtc?.setSound(want);
+  const overSocket = want && !rtc && wsSoundSupported();
+  if (overSocket && !wsSound) {
+    wsSound = new WsSound();
+  } else if (!overSocket && wsSound) {
+    wsSound.stop();
+    wsSound = null;
+  }
+}
+
+watch(() => [props.sound, props.audio, props.textView, playersOpen.value] as const, applySound);
 
 watch(
   () => props.paused,
@@ -1048,6 +1084,7 @@ watch(
     } else {
       streamUrl.value = `/stream?t=${Date.now()}`;
     }
+    applySound();
   },
 );
 
@@ -1056,6 +1093,7 @@ watch(useWebsocket, (on) => {
   else {
     stream?.stop();
     stream = null;
+    applySound();
   }
 });
 
@@ -1141,6 +1179,7 @@ if (DEMO) onMounted(startDemoScreen);
 else if (!props.paused) startStream();
 onUnmounted(() => {
   stream?.stop();
+  wsSound?.stop();
   if (wsRetry !== null) clearTimeout(wsRetry);
   if (demoRAF) cancelAnimationFrame(demoRAF);
   demoCleanup?.();
@@ -1180,13 +1219,21 @@ function updateBox() {
   const host = el.parentElement?.getBoundingClientRect();
   const p = pictureRect(el, props.fit);
   if (!host || !p) return;
+  /* Measured on screen, where the zoom scales both; the layer is placed before it. */
+  const z = props.zoom?.z ?? 1;
   box.value = {
-    left: p.rect.left - host.left + p.padX,
-    top: p.rect.top - host.top + p.padY,
-    width: p.width,
-    height: p.height,
+    left: (p.rect.left - host.left + p.padX) / z,
+    top: (p.rect.top - host.top + p.padY) / z,
+    width: p.width / z,
+    height: p.height / z,
   };
 }
+
+const zoomed = computed(() => (props.zoom?.z ?? 1) > 1);
+const zoomStyle = computed(() => {
+  const zm = props.zoom;
+  return zm && zm.z > 1 ? { transform: `translate(${zm.x}px, ${zm.y}px) scale(${zm.z})` } : {};
+});
 
 let boxObserver: ResizeObserver | null = null;
 onMounted(() => {
@@ -1381,65 +1428,68 @@ const fitClass = computed(() =>
 </script>
 
 <template>
-  <div class="screen">
-    <!-- In text mode the picture is not merely paused, it is gone: leaving the
-         last frame under a text box would show a screen that is no longer
-         there, half covered by the one that is. Hidden rather than removed,
-         because the text layer is placed against this element's box - take it
-         out of the layout and the characters have nothing to line up with. -->
-    <canvas
-      v-show="useWebsocket"
-      ref="canvas"
-      :class="[
-        'screen-img',
-        fitClass,
-        { 'screen-engaged': engaged, 'screen-img-blank': textView },
-      ]"
-    />
-    <img
-      v-if="!DEMO"
-      v-show="!useWebsocket"
-      ref="img"
-      :class="[
-        'screen-img',
-        fitClass,
-        { 'screen-engaged': engaged, 'screen-img-blank': textView },
-      ]"
-      :src="imgSrc"
-      alt="Target screen"
-      :draggable="false"
-      @load="
-        loaded = true;
-        codecError = null;
-      "
-      @error="
-        loaded = false;
-        failed = true;
-      "
-    />
+  <div :class="['screen', { 'screen-zoomed': zoomed }]">
+    <!-- The picture and its text layer move and scale together. -->
+    <div class="screen-zoom" :style="zoomStyle">
+      <!-- In text mode the picture is not merely paused, it is gone: leaving the
+           last frame under a text box would show a screen that is no longer
+           there, half covered by the one that is. Hidden rather than removed,
+           because the text layer is placed against this element's box - take it
+           out of the layout and the characters have nothing to line up with. -->
+      <canvas
+        v-show="useWebsocket"
+        ref="canvas"
+        :class="[
+          'screen-img',
+          fitClass,
+          { 'screen-engaged': engaged, 'screen-img-blank': textView },
+        ]"
+      />
+      <img
+        v-if="!DEMO"
+        v-show="!useWebsocket"
+        ref="img"
+        :class="[
+          'screen-img',
+          fitClass,
+          { 'screen-engaged': engaged, 'screen-img-blank': textView },
+        ]"
+        :src="imgSrc"
+        alt="Target screen"
+        :draggable="false"
+        @load="
+          loaded = true;
+          codecError = null;
+        "
+        @error="
+          loaded = false;
+          failed = true;
+        "
+      />
 
-    <!-- The engaged outline follows whatever the operator is actually looking
-         at. On the picture it rides the canvas; in text mode the canvas is
-         `visibility: hidden` (screen-img-blank), so an outline on it is hidden
-         with it - which is why the blue frame that says "the keyboard is going
-         to the target" simply vanished the moment text mode came up, even
-         though the keyboard was still going there. -->
-    <div
-      v-if="textLayer"
-      :class="[
-        'screen-text',
-        { 'screen-text-solid': textView, 'screen-engaged': engaged && textView },
-      ]"
-      :style="layerStyle"
-      aria-label="Screen text, selectable"
-    >
-      <div v-for="(spans, i) in layerRows" :key="i" class="screen-text-line">
-        <span
-          v-for="(span, j) in spans"
-          :key="j"
-          :class="{ 'screen-text-mark': span.mark }"
-          >{{ span.text }}</span
-        >
+      <!-- The engaged outline follows whatever the operator is actually looking
+           at. On the picture it rides the canvas; in text mode the canvas is
+           `visibility: hidden` (screen-img-blank), so an outline on it is hidden
+           with it - which is why the blue frame that says "the keyboard is going
+           to the target" simply vanished the moment text mode came up, even
+           though the keyboard was still going there. -->
+      <div
+        v-if="textLayer"
+        :class="[
+          'screen-text',
+          { 'screen-text-solid': textView, 'screen-engaged': engaged && textView },
+        ]"
+        :style="layerStyle"
+        aria-label="Screen text, selectable"
+      >
+        <div v-for="(spans, i) in layerRows" :key="i" class="screen-text-line">
+          <span
+            v-for="(span, j) in spans"
+            :key="j"
+            :class="{ 'screen-text-mark': span.mark }"
+            >{{ span.text }}</span
+          >
+        </div>
       </div>
     </div>
 

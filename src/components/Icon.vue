@@ -51,6 +51,22 @@ const PATHS = {
     "M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4",
   ],
   close: ["M6 6l12 12M18 6L6 18"],
+  /* A speaker with sound waves, and the same speaker crossed out. */
+  volume: ["M11 5 6 9H2v6h4l5 4V5z", "M15.5 8.5a5 5 0 0 1 0 7", "M19 5a10 10 0 0 1 0 14"],
+  "volume-off": ["M11 5 6 9H2v6h4l5 4V5z", "M22 9l-6 6M16 9l6 6"],
+  /* The target's media keys: the same speaker with a minus and a plus, the
+     player's skip and play/pause, and a dim sun for brightness down. */
+  "volume-down": ["M11 5 6 9H2v6h4l5 4V5z", "M16 12h6"],
+  "volume-up": ["M11 5 6 9H2v6h4l5 4V5z", "M16 12h6M19 9v6"],
+  "skip-back": ["M19 20 9 12l10-8v16z", "M5 19V5"],
+  "play-pause": ["M3 6l8 6-8 6z", "M15 6v12M20 6v12"],
+  "skip-forward": ["M5 4l10 8-10 8V4z", "M19 5v14"],
+  /* The keyboard of function and media keys: an F and a play triangle. */
+  "fn-keys": ["M3 5v14M3 5h7M3 12h5", "M14 8l7 4-7 4z"],
+  "sun-dim": [
+    "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+    "M12 4h.01M12 20h.01M4 12h.01M20 12h.01M6.3 6.3h.01M17.7 17.7h.01M6.3 17.7h.01M17.7 6.3h.01",
+  ],
   /* A door frame with an arrow leaving it. */
   logout: ["M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", "M16 17l5-5-5-5", "M21 12H9"],
   /* A drawing pin seen from the side: head, shaft, point. */

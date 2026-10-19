@@ -18,6 +18,7 @@ import {
   type UpdateState,
 } from "./control";
 import { isModifierCode, modifierMask, usageForCode } from "./keymap";
+import { mediaUsage } from "./mediaKeys";
 import { pictureRect } from "../video/picture";
 
 export interface InputOptions {
@@ -295,6 +296,12 @@ export function useInput(opts: InputOptions) {
         return;
       }
       e.preventDefault();
+      /* Volume and the player's keys, when the operator's OS lets them through. */
+      const media = mediaUsage(e);
+      if (media) {
+        if (!e.repeat) control.consumer(media);
+        return;
+      }
       if (!isModifierCode(e.code)) {
         const usage = usageForCode(e.code);
         if (usage) held.add(usage);
@@ -304,6 +311,10 @@ export function useInput(opts: InputOptions) {
 
     const onUp = (e: KeyboardEvent) => {
       e.preventDefault();
+      if (mediaUsage(e)) {
+        control.consumer(0);
+        return;
+      }
       const usage = usageForCode(e.code);
       if (usage) held.delete(usage);
       send(e);

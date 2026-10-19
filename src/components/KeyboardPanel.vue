@@ -25,6 +25,7 @@ import {
   usageForCode,
 } from "../input/keymap";
 import type { Control } from "../input/control";
+import { MEDIA_KEYS } from "../input/mediaKeys";
 import { useFloating } from "../ui/floating";
 import { haptic } from "../ui/haptic";
 import Icon from "./Icon.vue";
@@ -314,8 +315,20 @@ const PAD_GRID: (Key & { area: string })[] = [
   { code: "NumpadDecimal", text: ".", area: "dot" },
 ];
 
-/* Which layout is on show: everything, the short one, or the symbols. */
-const LAYOUTS = ["full", "compact", "symbols"] as const;
+/*
+ * The function keys on their own, for a BIOS or a boot menu: F1-F12, Esc and
+ * Enter, with the arrows beside them. The media keys are a row under them
+ * (see mediaKeys.ts); they are not key positions, so they are drawn apart.
+ */
+const fkey = (n: number): Key => ({ code: `F${n}`, text: `F${n}` });
+const FN_ROWS: Key[][] = [
+  [{ code: "Escape", text: "Esc" }, ...[1, 2, 3, 4, 5, 6].map(fkey)],
+  [...[7, 8, 9, 10, 11, 12].map(fkey), { code: "Enter", text: "Enter" }],
+];
+
+/* Which layout is on show: everything, the short one, the symbols, or the
+   function and media keys. */
+const LAYOUTS = ["full", "compact", "symbols", "fn"] as const;
 type Layout = (typeof LAYOUTS)[number];
 const layout = ref<Layout>(compact.value ? "compact" : "full");
 watch(layout, (l) => (compact.value = l === "compact"));
@@ -325,7 +338,13 @@ function cycleLayout() {
 }
 
 const rows = computed(() =>
-  layout.value === "compact" ? COMPACT_ROWS : layout.value === "symbols" ? SYMBOL_ROWS : ROWS,
+  layout.value === "compact"
+    ? COMPACT_ROWS
+    : layout.value === "symbols"
+      ? SYMBOL_ROWS
+      : layout.value === "fn"
+        ? FN_ROWS
+        : ROWS,
 );
 
 /*
@@ -336,7 +355,7 @@ const rows = computed(() =>
 const side = computed(() =>
   layout.value === "symbols"
     ? { kind: "pad", keys: PAD_GRID as Key[] }
-    : layout.value === "compact"
+    : layout.value === "compact" || layout.value === "fn"
       ? { kind: "nav", keys: NAV_GRID as Key[] }
       : { kind: "edit", keys: EDIT_KEYS },
 );
@@ -433,6 +452,22 @@ onUnmounted(() => {
   mq?.removeEventListener("change", onMediaQuery);
 });
 
+/* A media key is held while the finger is on it: the target repeats volume
+   steps itself, the way it does for a real keyboard. */
+let mediaHeld = false;
+
+function mediaDown(usage: number) {
+  haptic();
+  mediaHeld = true;
+  props.control.consumer(usage);
+}
+
+function mediaUp() {
+  if (!mediaHeld) return;
+  mediaHeld = false;
+  props.control.consumer(0);
+}
+
 function combo(c: { mods: number; code: string }) {
   haptic();
   const usage = usageForCode(c.code);
@@ -445,15 +480,18 @@ function combo(c: { mods: number; code: string }) {
 
 /*
  * What sort of key this is, which the tinted skin colours by: a modifier, the
- * function row, the navigation block, a lock, or one of the big editing keys.
- * Anything that prints a character stays plain in every skin.
+ * function row, the navigation block, a lock, one of the big editing keys, or
+ * the number pad - its digits lightly, so the block reads as one, and its
+ * operators. Any other key that prints a character stays plain in every skin.
  */
 function kind(key: Key): string {
   if (key.mod) return "mod";
   if (key.led) return "lock";
   if (/^F\d{1,2}$/.test(key.code) || key.code === "Escape") return "fn";
   if (/^(Arrow|Home|End|Page|Insert|Delete)/.test(key.code)) return "nav";
-  if (["Enter", "Backspace", "Tab", "Space"].includes(key.code)) return "edit";
+  if (["Enter", "NumpadEnter", "Backspace", "Tab", "Space"].includes(key.code)) return "edit";
+  if (/^Numpad\d$/.test(key.code)) return "pad";
+  if (key.code.startsWith("Numpad")) return "op";
   if (["PrintScreen", "Pause", "ScrollLock", "NumLock"].includes(key.code)) return "sys";
   return "char";
 }
@@ -562,12 +600,22 @@ function state(key: Key): Record<string, boolean> {
                 ? 'Only the keys a browser tends to swallow'
                 : layout === 'compact'
                   ? 'Symbols and the number pad'
-                  : 'Every key'
+                  : layout === 'symbols'
+                    ? 'Function and media keys'
+                    : 'Every key'
             "
             @click="cycleLayout"
           >
             <Icon
-              :name="layout === 'full' ? 'compact' : layout === 'compact' ? 'symbols' : 'keyboard'"
+              :name="
+                layout === 'full'
+                  ? 'compact'
+                  : layout === 'compact'
+                    ? 'symbols'
+                    : layout === 'symbols'
+                      ? 'fn-keys'
+                      : 'keyboard'
+              "
               :size="15"
             />
           </button>
@@ -621,6 +669,23 @@ function state(key: Key): Record<string, boolean> {
             @pointerleave="release"
           >
             {{ label(key) }}
+          </button>
+        </div>
+        <!-- Coloured like the function row they share on a laptop. -->
+        <div v-if="layout === 'fn'" class="vk-row vk-media">
+          <button
+            v-for="m in MEDIA_KEYS"
+            :key="m.usage"
+            type="button"
+            class="vk-key vk-k-fn"
+            :aria-label="m.label"
+            :title="'note' in m ? `${m.label}. ${m.note}` : m.label"
+            @pointerdown.prevent="mediaDown(m.usage)"
+            @pointerup="mediaUp"
+            @pointercancel="mediaUp"
+            @pointerleave="mediaUp"
+          >
+            <Icon :name="m.icon" :size="15" />
           </button>
         </div>
       </div>

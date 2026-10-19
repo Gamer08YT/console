@@ -28,7 +28,7 @@ function section(bytes: number[]): Uint8Array {
   return new Uint8Array([0, ...bytes, 0, 0, 0, 0]);
 }
 
-function stream(frames: { pts: number; data: number[] }[]): Uint8Array {
+function stream(frames: { pts: number; data: number[]; audio?: boolean }[]): Uint8Array {
   const out: Uint8Array[] = [];
   /* PAT: program 1 -> PMT PID 0x1000; section_length = 13 */
   out.push(packet(0, true, section([0x00, 0xb0, 13, 0, 1, 0xc1, 0, 0, 0, 1, 0xf0, 0x00])));
@@ -38,8 +38,10 @@ function stream(frames: { pts: number; data: number[] }[]): Uint8Array {
   );
   for (const f of frames) {
     const p = f.pts;
+    /* Audio has a PES length, as the recorder writes it; video has none. */
+    const len = f.audio ? 8 + f.data.length : 0;
     const pes = new Uint8Array([
-      0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5,
+      0, 0, 1, f.audio ? 0xc0 : 0xe0, len >> 8, len & 0xff, 0x80, 0x80, 5,
       0x21 | ((Math.floor(p / 2 ** 30) & 7) << 1),
       (p >> 22) & 0xff,
       (((p >> 15) & 0x7f) << 1) | 1,
@@ -48,7 +50,7 @@ function stream(frames: { pts: number; data: number[] }[]): Uint8Array {
       ...f.data,
     ]);
     for (let at = 0; at < pes.length; at += TS_PACKET - 4) {
-      out.push(packet(0x100, at === 0, pes.subarray(at, at + TS_PACKET - 4)));
+      out.push(packet(f.audio ? 0x101 : 0x100, at === 0, pes.subarray(at, at + TS_PACKET - 4)));
     }
   }
   const all = new Uint8Array(out.length * TS_PACKET);
@@ -85,4 +87,30 @@ test("starting mid-file skips the cut frame and finds the rest", () => {
     [70200],
   );
   assert.equal(lastPts(ts), 70200);
+});
+
+test("sound comes out as its own frames, and does not count for the length", () => {
+  const adts = [0xff, 0xf1, 0x4c, 0x80, 0x01, 0x3f, 0xfc, 7, 7];
+  const av = stream([
+    { pts: 63000, data: [0, 0, 0, 1, 0x65, 1] },
+    { pts: 63900, data: adts, audio: true },
+    { pts: 66600, data: [0, 0, 0, 1, 0x41, 2] },
+    { pts: 65820, data: adts, audio: true },
+    { pts: 70200, data: [0, 0, 0, 1, 0x41, 3] },
+    { pts: 99000, data: adts, audio: true },
+  ]);
+  const d = new TsDemuxer();
+  const got = [...d.push(av), ...d.flush()];
+  const sound = got.filter((a) => a.audio);
+  assert.deepEqual(
+    got.filter((a) => !a.audio).map((a) => a.pts),
+    [63000, 66600, 70200],
+  );
+  assert.deepEqual(
+    sound.map((a) => a.pts),
+    [63900, 65820, 99000],
+  );
+  /* the frame, header and all, nothing more */
+  assert.deepEqual([...sound[0].data], adts);
+  assert.equal(lastPts(av), 70200);
 });

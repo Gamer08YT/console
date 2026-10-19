@@ -520,6 +520,14 @@ export function webrtcClose(id: number): void {
   }).catch(() => undefined);
 }
 
+/** Sound on or off in a WebRTC session that offered audio. Best effort. */
+export function webrtcSound(id: number, on: boolean): void {
+  void fetch(`/api/v1/video/webrtc/sound?id=${id}&on=${on ? 1 : 0}`, {
+    method: "POST",
+    headers: CONSOLE_HEADER,
+  }).catch(() => undefined);
+}
+
 /* ---- runbooks ---------------------------------------------------------- */
 
 export type RunbookState = "idle" | "running" | "done" | "failed" | "stopped";

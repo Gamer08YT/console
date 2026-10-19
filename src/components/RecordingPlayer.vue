@@ -9,6 +9,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { captureUrl, type CaptureFile } from "../state/device";
 import Icon from "./Icon.vue";
 import { cueAt, parseSrt, toVtt, type Cue } from "../video/srt";
+import { playersOpen } from "../video/sound";
 import { TsPlayer } from "../video/tsPlayer";
 
 const props = defineProps<{ file: CaptureFile; start?: number }>();
@@ -45,6 +46,7 @@ function clock(s: number): string {
 }
 
 onMounted(async () => {
+  playersOpen.value++;
   if (props.file.subtitles) {
     try {
       const res = await fetch(captureUrl(props.file.subtitles), { cache: "no-store" });
@@ -73,6 +75,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  playersOpen.value--;
   player?.close();
   if (vttUrl.value) URL.revokeObjectURL(vttUrl.value);
 });

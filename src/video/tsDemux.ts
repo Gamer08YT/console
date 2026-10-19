@@ -1,6 +1,7 @@
 /*
- * Just enough MPEG-TS to play the device's recordings: find the H.264 stream
- * and hand back one access unit per PES packet, with its PTS.
+ * Just enough MPEG-TS to play the device's recordings: find the H.264 stream,
+ * and the AAC one when the recording has sound, and hand back one access unit
+ * per PES packet, with its PTS.
  *
  * The recorder writes one frame per PES packet, so a PES packet is a frame. The
  * input can start anywhere - a seek fetches from the middle of a file - so the
@@ -15,6 +16,30 @@ export interface AccessUnit {
   /** 90 kHz presentation time. */
   pts: number;
   data: Uint8Array;
+  /** An AAC frame with its ADTS header, not a picture. */
+  audio?: boolean;
+}
+
+/* One PID's PES packet being gathered. */
+class Gather {
+  parts: Uint8Array[] = [];
+  len = 0;
+  add(p: Uint8Array): void {
+    this.parts.push(p.slice());
+    this.len += p.length;
+  }
+  take(): Uint8Array | null {
+    if (!this.parts.length) return null;
+    const pes = new Uint8Array(this.len);
+    let at = 0;
+    for (const part of this.parts) {
+      pes.set(part, at);
+      at += part.length;
+    }
+    this.parts = [];
+    this.len = 0;
+    return pes;
+  }
 }
 
 /* PTS from a PES header, or null if it has none. Wants the PES bytes from 00 00 01. */
@@ -35,14 +60,15 @@ export class TsDemuxer {
   #carry = new Uint8Array(0);
   #pmtPid = -1;
   #videoPid = -1;
-  #parts: Uint8Array[] = [];
-  #partsLen = 0;
+  #audioPid = -1;
+  #video = new Gather();
+  #audio = new Gather();
 
   /** Forget everything: the next bytes come from somewhere else in the file. */
   reset(): void {
     this.#carry = new Uint8Array(0);
-    this.#parts = [];
-    this.#partsLen = 0;
+    this.#video = new Gather();
+    this.#audio = new Gather();
   }
 
   /** Feed bytes; returns the frames completed by them. */
@@ -71,7 +97,8 @@ export class TsDemuxer {
   /** The frame still being collected, at the end of the input. */
   flush(): AccessUnit[] {
     const out: AccessUnit[] = [];
-    this.#finish(out);
+    this.#finish(this.#video, false, out);
+    this.#finish(this.#audio, true, out);
     return out;
   }
 
@@ -93,35 +120,37 @@ export class TsDemuxer {
       if (start) this.#pmt(payload);
       return;
     }
-    if (this.#videoPid < 0 && start && payload[0] === 0 && payload[1] === 0 && payload[2] === 1) {
+    if (start && payload[0] === 0 && payload[1] === 0 && payload[2] === 1) {
       const streamId = payload[3];
-      if (streamId >= 0xe0 && streamId <= 0xef) this.#videoPid = pid;
+      if (this.#videoPid < 0 && streamId >= 0xe0 && streamId <= 0xef) this.#videoPid = pid;
+      if (this.#audioPid < 0 && streamId >= 0xc0 && streamId <= 0xdf) this.#audioPid = pid;
     }
-    if (pid !== this.#videoPid) return;
+    const audio = pid === this.#audioPid;
+    if (pid !== this.#videoPid && !audio) return;
+    const g = audio ? this.#audio : this.#video;
 
     if (start) {
-      this.#finish(out);
-    } else if (!this.#parts.length) {
+      this.#finish(g, audio, out);
+    } else if (!g.parts.length) {
       return; /* the middle of a frame whose start was not seen */
     }
-    this.#parts.push(payload.slice());
-    this.#partsLen += payload.length;
+    g.add(payload);
   }
 
-  #finish(out: AccessUnit[]): void {
-    if (!this.#parts.length) return;
-    const pes = new Uint8Array(this.#partsLen);
-    let at = 0;
-    for (const part of this.#parts) {
-      pes.set(part, at);
-      at += part.length;
-    }
-    this.#parts = [];
-    this.#partsLen = 0;
+  #finish(g: Gather, audio: boolean, out: AccessUnit[]): void {
+    const pes = g.take();
+    if (!pes) return;
     const pts = pesPts(pes);
     if (pts === null) return;
     const headerEnd = 9 + pes[8];
-    if (headerEnd < pes.length) out.push({ pts, data: pes.subarray(headerEnd) });
+    let end = pes.length;
+    if (audio) {
+      /* An audio PES has a length; what follows it in its last packet is filler. */
+      end = Math.min(end, 6 + ((pes[4] << 8) | pes[5]));
+    }
+    if (headerEnd < end) {
+      out.push({ pts, data: pes.subarray(headerEnd, end), audio: audio || undefined });
+    }
   }
 
   /* A section starts after the pointer field. */
@@ -145,10 +174,8 @@ export class TsDemuxer {
       const type = s[i];
       const pid = ((s[i + 1] & 0x1f) << 8) | s[i + 2];
       const esInfo = ((s[i + 3] & 0x0f) << 8) | s[i + 4];
-      if (type === 0x1b) {
-        this.#videoPid = pid;
-        return;
-      }
+      if (type === 0x1b) this.#videoPid = pid;
+      if (type === 0x0f) this.#audioPid = pid;
       i += 5 + esInfo;
     }
   }
@@ -159,7 +186,7 @@ export function lastPts(bytes: Uint8Array): number | null {
   const d = new TsDemuxer();
   let last: number | null = null;
   for (const au of [...d.push(bytes), ...d.flush()]) {
-    if (last === null || au.pts > last) last = au.pts;
+    if (!au.audio && (last === null || au.pts > last)) last = au.pts;
   }
   return last;
 }

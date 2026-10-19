@@ -39,7 +39,8 @@ import KeyboardPanel from "./components/KeyboardPanel.vue";
 import TouchControls from "./components/TouchControls.vue";
 import UpdateWidget from "./components/UpdateWidget.vue";
 import { useInput } from "./input/useInput";
-import { useTouch } from "./input/useTouch";
+import { soundHeld } from "./video/sound";
+import { NO_ZOOM, useTouch, type Zoom } from "./input/useTouch";
 import { DEFAULT_LAYOUT } from "./layouts";
 import {
   type Capability,
@@ -512,6 +513,31 @@ const uiRight = computed(() => enumName(schema.value, values.value, "ui_side") =
  * want either. The keyboard uses the target's own layout, like paste does.
  */
 const touchMode = ref(false);
+/* Pinch zoom, touch mode only: the trackpad pointer needs no mapping through it. */
+const zoom = ref<Zoom>(NO_ZOOM);
+watch(touchMode, (on) => {
+  if (!on) zoom.value = NO_ZOOM;
+});
+/* The target's sound: off until asked for, remembered per browser. */
+const soundOn = ref(localStorage.getItem("espkvm.sound") === "1");
+watch(soundOn, (on) => {
+  try {
+    localStorage.setItem("espkvm.sound", on ? "1" : "0");
+  } catch {
+    /* a private window; it just will not be remembered */
+  }
+});
+/* A click on the sound button while the browser holds the sound back starts
+   it (the click is the gesture it waits for) instead of turning it off. The
+   gesture handler runs first, so whether it was held is read on press. */
+let soundWasHeld = false;
+function soundPress() {
+  soundWasHeld = soundOn.value && soundHeld.value;
+}
+function soundClick() {
+  if (!soundWasHeld) soundOn.value = !soundOn.value;
+  soundWasHeld = false;
+}
 /* The keyboard drawn on the page: closed until asked for, remembered per
    browser because someone who needs it usually needs it every time. */
 const oskOpen = ref(localStorage.getItem("espkvm.osk") === "1");
@@ -663,6 +689,8 @@ useTouch({
   active: touchMode,
   invertScroll,
   sensitivity: touchSensitivity,
+  zoom,
+  fit,
 });
 
 /* Another browser is driving this target. Input from here is ignored until the
@@ -2162,6 +2190,9 @@ const LED_BITS: Array<[number, string]> = [
             :text-layer="selectingText || textView ? screenText : null"
             :text-view="textView"
             :webrtc="Boolean(caps.webrtc?.active)"
+            :audio="Boolean(caps.audio?.active)"
+            :sound="soundOn"
+            :zoom="zoom"
             :pause-note="
               updateHoldsStream
                 ? 'The picture is back the moment the update is done - it gives up its connection so the image gets the device to itself.'
@@ -2203,6 +2234,16 @@ const LED_BITS: Array<[number, string]> = [
             <p>Another session is in control of this target.</p>
             <button type="button" class="btn" @click="takeControl">Take control</button>
           </div>
+
+          <button
+            v-if="touchMode && zoom.z > 1"
+            type="button"
+            class="screen-zoom-chip"
+            title="Show the whole screen"
+            @click="zoom = NO_ZOOM"
+          >
+            {{ zoom.z.toFixed(1) }}&times;
+          </button>
 
           <TouchControls
             v-if="touchMode && (!paused || textView) && !heldByOther"
@@ -2668,6 +2709,27 @@ const LED_BITS: Array<[number, string]> = [
           All keys
         </button>
         </div>
+        <button
+          v-if="caps.audio?.active"
+          type="button"
+          class="btn btn-sm btn-icon"
+          :class="{ 'btn-on': soundOn, asking: soundOn && soundHeld }"
+          data-ui="sound"
+          :aria-label="soundOn ? 'Sound on' : 'Sound off'"
+          :aria-pressed="soundOn"
+          :title="
+            soundOn && soundHeld
+              ? 'The browser plays the sound after a click on the page'
+              : soundOn
+                ? 'The target\'s sound is on'
+                : 'Hear the target\'s sound'
+          "
+          @pointerdown="soundPress"
+          @keydown.enter.space="soundPress"
+          @click="soundClick"
+        >
+          <Icon :name="soundOn ? 'volume' : 'volume-off'" :size="15" />
+        </button>
         <button
           type="button"
           class="btn btn-sm btn-icon"
