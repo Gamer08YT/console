@@ -14,7 +14,37 @@
  * before it is due, so a pause or a seek only has to stop what is queued.
  */
 import { codecFromSps, inspectAnnexB } from "./stream";
-import { TS_PACKET, TsDemuxer, lastPts, type AccessUnit } from "./tsDemux";
+import { TS_PACKET, TsDemuxer, lastPts, opusPacket, type AccessUnit } from "./tsDemux";
+
+/*
+ * A sound unit, ready for the decoder: Opus as the recorder writes it now
+ * (48 kHz stereo, 20 ms packets), or AAC with its ADTS header, which says the
+ * rate and channels and goes to the decoder as it is.
+ */
+function soundOf(
+  d: Uint8Array,
+): { format: string; config: AudioDecoderConfig; data: Uint8Array } | null {
+  const opus = opusPacket(d);
+  if (opus) {
+    return {
+      format: "opus",
+      config: { codec: "opus", sampleRate: 48000, numberOfChannels: 2 },
+      data: opus,
+    };
+  }
+  if (d.length < 7 || d[0] !== 0xff) return null;
+  const rates = [
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
+  ];
+  const rate = rates[(d[2] >> 2) & 0x0f];
+  const channels = ((d[2] & 1) << 2) | (d[3] >> 6);
+  if (!rate || !channels) return null;
+  return {
+    format: `aac/${rate}/${channels}`,
+    config: { codec: "mp4a.40.2", sampleRate: rate, numberOfChannels: channels },
+    data: d,
+  };
+}
 
 export interface PlayerEvents {
   /** Seconds from the start of the recording. */
@@ -287,28 +317,21 @@ export class TsPlayer {
   #decodeAudio(au: AccessUnit): void {
     if (typeof AudioDecoder === "undefined") return;
     const us = usOf(au.pts);
-    const d = au.data;
-    if (us <= this.#audioSubmittedUs || d.length < 7 || d[0] !== 0xff) return;
-    /* The ADTS header says the rate and channels; the decoder takes ADTS as it is. */
-    const rates = [
-      96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000,
-    ];
-    const rate = rates[(d[2] >> 2) & 0x0f];
-    const channels = ((d[2] & 1) << 2) | (d[3] >> 6);
-    if (!rate || !channels) return;
-    const format = `${rate}/${channels}`;
+    if (us <= this.#audioSubmittedUs) return;
+    const sound = soundOf(au.data);
+    if (!sound) return;
     const old = this.#audioDecoder;
-    if (format !== this.#audioFormat || !old || old.state === "closed") {
+    if (sound.format !== this.#audioFormat || !old || old.state === "closed") {
       if (old && old.state !== "closed") old.close();
       this.#audioDecoder = null;
-      this.#audioFormat = format;
+      this.#audioFormat = sound.format;
       const gen = this.#gen;
       try {
         const decoder = new AudioDecoder({
           output: (data) => this.#onSound(gen, data),
           error: () => undefined, /* the picture plays on without it */
         });
-        decoder.configure({ codec: "mp4a.40.2", sampleRate: rate, numberOfChannels: channels });
+        decoder.configure(sound.config);
         this.#audioDecoder = decoder;
       } catch {
         return;
@@ -317,7 +340,7 @@ export class TsPlayer {
     const decoder = this.#audioDecoder;
     if (!decoder) return;
     this.#audioSubmittedUs = us;
-    decoder.decode(new EncodedAudioChunk({ type: "key", timestamp: us, data: d }));
+    decoder.decode(new EncodedAudioChunk({ type: "key", timestamp: us, data: sound.data }));
   }
 
   #onSound(gen: number, data: AudioData): void {

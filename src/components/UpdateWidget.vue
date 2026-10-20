@@ -44,6 +44,7 @@ import {
   watchPct,
   watchStep,
 } from "../state/restart";
+import { reportSeen, seenUrl } from "../state/seen";
 import { toast } from "../state/toasts";
 
 const props = defineProps<{ system: SystemInfo | null; values: Values }>();
@@ -250,6 +251,13 @@ watch(updateEnabled, (on) => (on ? void checkForUpdate() : (release.value = null
   immediate: true,
 });
 watch(updateUrl, () => void checkForUpdate());
+/* A check that worked counts the device (seen.ts); the device info may come
+   in after the check, so either order reports. */
+watch([release, () => props.system?.installId], ([rel, id]) => {
+  if (!rel) return;
+  const s = props.system;
+  reportSeen(seenUrl(updateUrl.value, id, s?.boardId, s?.version), id);
+});
 
 /**
  * Say what went wrong, and leave it said.

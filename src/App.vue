@@ -27,6 +27,7 @@ import MediaPanel from "./components/MediaPanel.vue";
 import PowerWidget from "./components/PowerWidget.vue";
 import RemotePanel from "./components/RemotePanel.vue";
 import GamepadPanel from "./components/GamepadPanel.vue";
+import PointerStick from "./components/PointerStick.vue";
 import SerialPanel from "./components/SerialPanel.vue";
 import LogPanel from "./components/LogPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -41,6 +42,7 @@ import UpdateWidget from "./components/UpdateWidget.vue";
 import { useInput } from "./input/useInput";
 import { soundHeld } from "./video/sound";
 import { NO_ZOOM, useTouch, type Zoom } from "./input/useTouch";
+import { usePadMouse } from "./input/padMouse";
 import { DEFAULT_LAYOUT } from "./layouts";
 import {
   type Capability,
@@ -683,7 +685,21 @@ watchEffect(() => {
   );
 });
 
-useTouch({
+/* A stick as a mouse, both off until asked for: one-finger drags in touch
+   mode, and a real controller on this computer (below). */
+const stickSpeed = computed(() => Number(values.value.mouse_sens ?? 100) / 100);
+const stickOn = ref(localStorage.getItem("espkvm.stick") === "1");
+const padMouseOn = ref(localStorage.getItem("espkvm.padmouse") === "1");
+watch([stickOn, padMouseOn], ([stick, pad]) => {
+  try {
+    localStorage.setItem("espkvm.stick", stick ? "1" : "0");
+    localStorage.setItem("espkvm.padmouse", pad ? "1" : "0");
+  } catch {
+    /* a private window; it just will not be remembered */
+  }
+});
+
+const { stickAt } = useTouch({
   surface,
   control: input.control,
   active: touchMode,
@@ -691,11 +707,23 @@ useTouch({
   sensitivity: touchSensitivity,
   zoom,
   fit,
+  stick: stickOn,
+  stickSpeed,
 });
 
 /* Another browser is driving this target. Input from here is ignored until the
    operator takes control, so say so instead of leaving a dead pointer. */
 const heldByOther = computed(() => input.controlState.value === "held");
+
+/* A real controller as a mouse; it gives way to the gamepad window, which
+   sends it to the target as a pad. */
+const padToPad = computed(() => gamepadOpen.value && usbPad.value);
+const padMouse = usePadMouse({
+  control: input.control,
+  active: computed(() => padMouseOn.value && !padToPad.value && !heldByOther.value),
+  speed: stickSpeed,
+  invertScroll,
+});
 /* Losing control while engaged would strand a captured keyboard doing nothing. */
 watch(heldByOther, (held) => {
   if (held) engaged.value = false;
@@ -1961,7 +1989,8 @@ const LED_BITS: Array<[number, string]> = [
     <div v-if="showUpdAsk" class="update-banner" role="status">
       <span>
         Get told when a new version is out? The browser checks whether a newer ESP-KVM is
-        published and offers it; the device itself never reaches out.
+        published and offers it, and counts this device for the project: a random id, the board
+        and the version, once a day. The device itself never reaches out.
       </span>
       <button type="button" class="btn btn-sm btn-primary" @click="enableUpdateChecks">
         Turn on
@@ -2249,7 +2278,10 @@ const LED_BITS: Array<[number, string]> = [
             v-if="touchMode && (!paused || textView) && !heldByOther"
             :control="input.control"
             :layout="layout"
+            :stick="stickOn"
+            @stick="stickOn = $event"
           />
+          <PointerStick v-if="stickAt" :at="stickAt" />
         </div>
 
 
@@ -2540,6 +2572,24 @@ const LED_BITS: Array<[number, string]> = [
           @click="gamepadOpen = !gamepadOpen"
         >
           <Icon name="gamepad" :size="15" />
+        </button>
+        <!-- Only while the browser sees a controller it can read. -->
+        <button
+          v-if="padMouse.connected.value && !padToPad"
+          type="button"
+          class="btn btn-sm btn-icon"
+          :class="{ 'btn-on': padMouseOn }"
+          data-ui="padmouse"
+          aria-label="Controller as mouse"
+          :aria-pressed="padMouseOn"
+          :title="
+            padMouseOn
+              ? 'The controller moves the mouse: left stick moves, the bottom button clicks, the right stick scrolls'
+              : 'Move the mouse with the controller'
+          "
+          @click="padMouseOn = !padMouseOn"
+        >
+          <Icon name="pointer" :size="15" />
         </button>
         <button
           type="button"

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TS_PACKET, TsDemuxer, lastPts } from "../src/video/tsDemux.ts";
+import { TS_PACKET, TsDemuxer, lastPts, opusPacket } from "../src/video/tsDemux.ts";
 
 /* A tiny transport stream: PAT, PMT (H.264 on PID 0x100), then one PES per frame. */
 function packet(pid: number, start: boolean, payload: Uint8Array): Uint8Array {
@@ -28,7 +28,10 @@ function section(bytes: number[]): Uint8Array {
   return new Uint8Array([0, ...bytes, 0, 0, 0, 0]);
 }
 
-function stream(frames: { pts: number; data: number[]; audio?: boolean }[]): Uint8Array {
+function stream(
+  frames: { pts: number; data: number[]; audio?: boolean }[],
+  opus = false,
+): Uint8Array {
   const out: Uint8Array[] = [];
   /* PAT: program 1 -> PMT PID 0x1000; section_length = 13 */
   out.push(packet(0, true, section([0x00, 0xb0, 13, 0, 1, 0xc1, 0, 0, 0, 1, 0xf0, 0x00])));
@@ -41,7 +44,7 @@ function stream(frames: { pts: number; data: number[]; audio?: boolean }[]): Uin
     /* Audio has a PES length, as the recorder writes it; video has none. */
     const len = f.audio ? 8 + f.data.length : 0;
     const pes = new Uint8Array([
-      0, 0, 1, f.audio ? 0xc0 : 0xe0, len >> 8, len & 0xff, 0x80, 0x80, 5,
+      0, 0, 1, f.audio ? (opus ? 0xbd : 0xc0) : 0xe0, len >> 8, len & 0xff, 0x80, 0x80, 5,
       0x21 | ((Math.floor(p / 2 ** 30) & 7) << 1),
       (p >> 22) & 0xff,
       (((p >> 15) & 0x7f) << 1) | 1,
@@ -113,4 +116,29 @@ test("sound comes out as its own frames, and does not count for the length", () 
   /* the frame, header and all, nothing more */
   assert.deepEqual([...sound[0].data], adts);
   assert.equal(lastPts(av), 70200);
+});
+
+test("Opus, as the recorder writes it now: a private stream, a header in front", () => {
+  const packetBytes = Array.from({ length: 300 }, (_, i) => (i * 7) & 0xff);
+  /* control header: prefix 0x7fe0, size 300 = 255 + 45 */
+  const unit = [0x7f, 0xe0, 255, 45, ...packetBytes];
+  const av = stream(
+    [
+      { pts: 63000, data: [0, 0, 0, 1, 0x65, 1] },
+      { pts: 63900, data: unit, audio: true },
+      { pts: 66600, data: [0, 0, 0, 1, 0x41, 2] },
+    ],
+    true,
+  );
+  const d = new TsDemuxer();
+  const sound = [...d.push(av), ...d.flush()].filter((a) => a.audio);
+  assert.deepEqual(
+    sound.map((a) => a.pts),
+    [63900],
+  );
+  assert.deepEqual([...(opusPacket(sound[0].data) ?? [])], packetBytes);
+  /* trims and an extension are skipped; a cut-off unit or ADTS is not Opus */
+  assert.deepEqual([...(opusPacket(new Uint8Array([0x7f, 0xfc, 2, 0, 1, 0, 2, 1, 9, 8, 7])) ?? [])], [8, 7]);
+  assert.equal(opusPacket(new Uint8Array([0x7f, 0xe0, 9, 1, 2])), null);
+  assert.equal(opusPacket(new Uint8Array([0xff, 0xf1, 0x4c, 0x80])), null);
 });

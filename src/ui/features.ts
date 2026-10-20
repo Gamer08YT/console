@@ -23,6 +23,7 @@ export const UI_FEATURES: UiFeature[] = [
   { id: "cec", label: "TV remote (HDMI-CEC)", group: "Input" },
   { id: "gamepad", label: "Gamepad", group: "Input" },
   { id: "touch", label: "Touch mode", group: "Input" },
+  { id: "padmouse", label: "Controller as mouse", group: "Input" },
   { id: "keylock", label: "All keys (capture browser shortcuts)", group: "Input" },
   { id: "pause", label: "Pause the stream", group: "Picture" },
   { id: "scale", label: "Scale", group: "Picture" },

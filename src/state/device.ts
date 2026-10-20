@@ -220,6 +220,8 @@ export interface SystemInfo {
    * table predates it.
    */
   crashDumpBytes?: number;
+  /** This install's random id, sent with the update check (see seen.ts). */
+  installId?: string;
   /** The gamepad the USB device carries (Settings -> Input -> Gamepad, from boot): "" none. */
   usbPad?: "" | "switch" | "xinput" | "xbox";
   /** A battery-backed clock chip answered on the I2C bus. */

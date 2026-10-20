@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /*
  * On-screen controls for touch mode: explicit mouse buttons for the taps that
- * are awkward as gestures, and an on-screen keyboard.
+ * are awkward as gestures, an on-screen keyboard, and the switch that makes a
+ * one-finger drag a pointer stick (see useTouch).
  *
  * The keyboard is a hidden text field. Tapping "Keyboard" focuses it, which is
  * what makes the phone's own keyboard appear; each character it produces is
@@ -17,7 +18,8 @@ import { usageForCode } from "../input/keymap";
 import type { Control } from "../input/control";
 import { haptic } from "../ui/haptic";
 
-const props = defineProps<{ control: Control; layout: string }>();
+const props = defineProps<{ control: Control; layout: string; stick: boolean }>();
+const emit = defineEmits<{ stick: [on: boolean] }>();
 
 /* Key positions that are not characters. */
 const ENTER = 0x28;
@@ -168,6 +170,17 @@ function toggleKeyboard() {
         @click="padOpen = !padOpen"
       >
         Keys
+      </button>
+      <button
+        type="button"
+        class="touch-btn"
+        :class="{ 'touch-btn-on': stick }"
+        aria-label="Pointer stick"
+        title="A drag works as a stick: the pointer keeps moving while the finger is held off where it landed"
+        :aria-pressed="stick"
+        @click="emit('stick', !stick)"
+      >
+        Stick
       </button>
       <button
         type="button"

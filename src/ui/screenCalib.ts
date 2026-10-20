@@ -8,8 +8,13 @@
  * appeared each time. Two straight lines through those points give the
  * desktop's size and this screen's place in it, in the picture's pixels.
  *
- * The cursor is found as what changed between frames: it leaves one spot and
- * appears at another. Its arrow tip is the top-left of the patch it drew.
+ * At each point the pointer goes there and then a few pixels further right,
+ * and the cursor is what changed between those two pictures: the tip of the
+ * arrow is that patch's top-left. A button lit up under the pointer stays lit
+ * across the nudge, so it does not get in the way. Every move is waited for -
+ * first to show, then for the picture to go still - so a slow stream cannot
+ * hand one step's cursor to the next. Spots that change on their own (a
+ * clock, a blinking caret) are watched for before the sweep and left out.
  */
 import type { Control } from "../input/control";
 import { ABS_MAX } from "../input/control";
@@ -22,8 +27,15 @@ export interface ScreenWindow {
   y: number;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
+/** What the sweep needs from the world; the console's is below, a test can bring its own. */
+export interface Probe {
+  width: number;
+  height: number;
+  move(ax: number, ay: number): void;
+  snap(): Uint8ClampedArray;
+  wait(ms: number): Promise<void>;
+  now(): number;
+}
 
 /* Every other pixel is plenty to find a cursor and halves the work. */
 const STEP = 2;
@@ -31,8 +43,18 @@ const CHANGED = 40; /* summed RGB difference that counts as changed */
 /* A cursor patch, in picture pixels: anything far bigger is the screen redrawing. */
 const MIN_PIXELS = 8;
 const MAX_SIDE = 96;
+const POLL_MS = 80;
+/* How long a move may take to show; after the first one, a few times what it took. */
+const FIRST_WAIT_MS = 2500;
+const QUIET_POLLS = 2;
+/* A spot this close to where the line says the cursor is, is the cursor. */
+const PREDICT_PX = 48;
+/* The step right of each point, in pointer units: a few pixels on any desktop up to 8K wide. */
+const NUDGE = Math.round(ABS_MAX / 300);
+/* How long to watch the still screen for spots that change by themselves. */
+const WATCH_MS = 1500;
 
-interface Patch {
+export interface Patch {
   x0: number;
   y0: number;
   x1: number;
@@ -40,18 +62,14 @@ interface Patch {
   n: number;
 }
 
-function snap(pic: Picture, w: number, h: number): Uint8ClampedArray {
-  pic.refresh();
-  return pic.ctx.getImageData(0, 0, w, h).data;
-}
-
 /* The changed spots, grouped into patches of nearby pixels. */
-function patches(a: Uint8ClampedArray, b: Uint8ClampedArray, w: number, h: number): Patch[] {
+export function patches(a: Uint8ClampedArray, b: Uint8ClampedArray, w: number, h: number): Patch[] {
   const out: Patch[] = [];
   for (let y = 0; y < h; y += STEP) {
     for (let x = 0; x < w; x += STEP) {
       const i = (y * w + x) * 4;
-      const d = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+      const d =
+        Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
       if (d < CHANGED) continue;
       let p = out.find((q) => x >= q.x0 - 24 && x <= q.x1 + 24 && y >= q.y0 - 24 && y <= q.y1 + 24);
       if (!p) {
@@ -65,19 +83,13 @@ function patches(a: Uint8ClampedArray, b: Uint8ClampedArray, w: number, h: numbe
       p.n++;
     }
   }
-  return out.filter((p) => p.n >= MIN_PIXELS / STEP && p.x1 - p.x0 <= MAX_SIDE && p.y1 - p.y0 <= MAX_SIDE);
+  return out.filter(
+    (p) => p.n >= MIN_PIXELS / STEP && p.x1 - p.x0 <= MAX_SIDE && p.y1 - p.y0 <= MAX_SIDE,
+  );
 }
 
-/* Did anything at all change - to tell a frozen picture from a hidden cursor. */
-function changedAnywhere(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
-  for (let i = 0; i < a.length; i += 4 * 97) {
-    if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) >= CHANGED) return true;
-  }
-  return false;
-}
-
-const near = (p: Patch, at: { x: number; y: number }) =>
-  Math.abs(p.x0 - at.x) < 32 && Math.abs(p.y0 - at.y) < 32;
+const near = (p: Patch, at: { x: number; y: number }, by = 32) =>
+  Math.abs(p.x0 - at.x) < by && Math.abs(p.y0 - at.y) < by;
 
 /*
  * The same, but deaf to points that are not on the line. Sent where no screen
@@ -126,14 +138,12 @@ function fit(pairs: [number, number][]): { slope: number; offset: number } | nul
  * pointer reaches every edge of the picture at the edges of its range).
  * Throws an Error saying what to do when the pointer never showed.
  */
-export async function findScreen(
-  control: Control,
-  canvas: Picture,
+export async function sweep(
+  p: Probe,
   onStep?: (n: number, of: number) => void,
 ): Promise<ScreenWindow | null> {
-  const ctx = canvas;
-  const w = canvas.width;
-  const h = canvas.height;
+  const w = p.width;
+  const h = p.height;
   if (w < 64 || h < 64) throw new Error("there is no picture to watch yet");
 
   const xs = Array.from({ length: 12 }, (_, i) => (i + 0.5) / 12);
@@ -142,84 +152,90 @@ export async function findScreen(
 
   const xPairs: [number, number][] = [];
   const yPairs: [number, number][] = [];
-  let cursor: { x: number; y: number } | null = null;
-  let before = snap(ctx, w, h);
   /* For the error message: what the sweep actually saw. */
-  let anyChange = 0;
-  let tooMuch = 0;
-  let rawChanged = 0;
+  let changed = 0;
+  let unsure = 0;
+  /* How long a move took to show, once one has: later steps wait for a few times that. */
+  let lag = -1;
 
-  /* The step before, until its cursor has been seen. */
-  let pending: { ax: number; ay: number } | null = null;
+  /* Let whatever was moving (the countdown, a fading tooltip) stop first. */
+  let before = p.snap();
+  for (let quiet = 0, t0 = p.now(); quiet < QUIET_POLLS && p.now() - t0 < FIRST_WAIT_MS;) {
+    await p.wait(POLL_MS);
+    const now = p.snap();
+    quiet = patches(before, now, w, h).length ? 0 : quiet + 1;
+    before = now;
+  }
+  /* Then watch it, untouched: whatever changes now does so on its own. */
+  const noisy: Patch[] = [];
+  for (let t0 = p.now(); p.now() - t0 < WATCH_MS;) {
+    await p.wait(POLL_MS);
+    const now = p.snap();
+    noisy.push(...patches(before, now, w, h));
+    before = now;
+  }
+  const overlaps = (a: Patch, b: Patch) =>
+    a.x0 <= b.x1 + 8 && b.x0 <= a.x1 + 8 && a.y0 <= b.y1 + 8 && b.y0 <= a.y1 + 8;
+  const look = (a: Uint8ClampedArray, b: Uint8ClampedArray) =>
+    patches(a, b, w, h).filter((q) => !noisy.some((n) => overlaps(q, n)));
 
-  /* Take a late arrival as the step it belongs to. */
-  const credit = (found: Patch[]) => {
-    const fresh = found.filter((p) => !cursor || !near(p, cursor));
-    if (fresh.length === 1) {
-      cursor = { x: fresh[0].x0, y: fresh[0].y0 };
-      if (pending) {
-        xPairs.push([pending.ax, cursor.x]);
-        yPairs.push([pending.ay, cursor.y]);
-        pending = null;
+  /* Move, then wait for the move to show and for the picture to go still. A
+     move between two points off this screen shows nothing; that is waited out
+     for a few times what a move took to show so far. */
+  const settle = async (ax: number, ay: number) => {
+    const from = before;
+    p.move(ax, ay);
+    const t0 = p.now();
+    const limit = lag < 0 ? FIRST_WAIT_MS : Math.min(FIRST_WAIT_MS, Math.max(400, lag * 3));
+    let seenAt = -1;
+    let quiet = 0;
+    while (p.now() - t0 < (seenAt < 0 ? limit : FIRST_WAIT_MS) && quiet < QUIET_POLLS) {
+      await p.wait(POLL_MS);
+      const now = p.snap();
+      if (seenAt < 0) {
+        if (look(from, now).length) seenAt = p.now() - t0;
+      } else {
+        quiet = look(before, now).length ? 0 : quiet + 1;
       }
-    } else if (fresh.length > 1) {
-      tooMuch++;
-      cursor = null;
-      pending = null;
-    } else if (found.length) {
-      cursor = null; /* only the old spot changed: it left this screen */
+      before = now;
     }
+    if (seenAt >= 0) lag = lag < 0 ? seenAt : Math.max(lag, seenAt);
+    return seenAt >= 0;
   };
 
   for (let i = 0; i < grid.length; i++) {
     onStep?.(i + 1, grid.length);
-    /* Let the picture settle first. Whatever still changes now is the step
-       before arriving late, and is credited to it rather than to this one. */
-    {
-      const t0 = performance.now();
-      let quiet = 0;
-      while (quiet < 2 && performance.now() - t0 < 2000) {
-        await sleep(120);
-        await frame();
-        const now = snap(ctx, w, h);
-        const found = patches(before, now, w, h);
-        if (found.length) {
-          credit(found);
-          quiet = 0;
-        } else {
-          quiet++;
-        }
-        before = now;
-      }
-    }
-    pending = null;
-
     const ax = Math.round(grid[i][0] * ABS_MAX);
     const ay = Math.round(grid[i][1] * ABS_MAX);
-    control.mouseAbsolute(0, ax, ay);
-    pending = { ax, ay };
-    /* Done when the cursor shows somewhere new, or - if it was on this screen -
-       when it is gone from where it was. A change anywhere else (compression
-       noise, a clock) is not the move. */
-    const t0 = performance.now();
-    let after = snap(ctx, w, h);
-    let found = patches(before, after, w, h);
-    const moved = () =>
-      found.some((p) => !cursor || !near(p, cursor)) || (cursor !== null && found.some((p) => near(p, cursor!)));
-    while (!moved() && performance.now() - t0 < 2000) {
-      await frame();
-      after = snap(ctx, w, h);
-      found = patches(before, after, w, h);
+    /* To the point, then a few pixels right of it. Between those two pictures
+       only the cursor changes: a button lit up under it stays lit, and where
+       the cursor was before is already in the past. The changed patch's
+       top-left is the arrow's tip at the point. */
+    /* Nothing changed on the way here: the cursor is on another screen. */
+    if (!(await settle(ax, ay))) continue;
+    const at = before;
+    if (!(await settle(ax + NUDGE, ay))) continue;
+    const found = look(at, before);
+    if (found.length) changed++;
+    let pick: Patch | null = null;
+    if (found.length === 1) {
+      pick = found[0];
+    } else if (found.length > 1) {
+      /* The nudge crossed into something that lights up: the line so far says which is the cursor. */
+      const fx = xPairs.length >= 2 ? fit(xPairs) : null;
+      const fy = yPairs.length >= 2 ? fit(yPairs) : null;
+      if (fx && fy) {
+        const want = { x: fx.slope * ax + fx.offset, y: fy.slope * ay + fy.offset };
+        const close = found.filter((q) => near(q, want, PREDICT_PX));
+        if (close.length === 1) pick = close[0];
+      }
+      if (!pick) unsure++;
     }
-    await sleep(150);
-    await frame();
-    after = snap(ctx, w, h);
-    found = patches(before, after, w, h);
-    if (changedAnywhere(before, after)) rawChanged++;
-    if (found.length) anyChange++;
-    console.debug("[findScreen]", ax, ay, JSON.stringify(found));
-    credit(found);
-    before = after;
+    console.debug("[findScreen]", ax, ay, JSON.stringify(found), pick ? "->" : "", pick ?? "");
+    if (pick) {
+      xPairs.push([ax, pick.x0]);
+      yPairs.push([ay, pick.y0]);
+    }
   }
 
   const fx = robustFit(xPairs);
@@ -227,8 +243,8 @@ export async function findScreen(
   if (!fx || !fy || xPairs.length < 3) {
     throw new Error(
       `the pointer did not show up in the picture often enough - make it visible on the target, on a still screen, and try again ` +
-        `(seen at ${xPairs.length} of ${grid.length} points; the picture changed ${rawChanged} times, ` +
-        `${anyChange} of them like a cursor, ${tooMuch} too busy to tell)`,
+        `(seen at ${xPairs.length} of ${grid.length} points; the picture changed at ${changed}, ` +
+        `${unsure} too busy to tell)`,
     );
   }
   /* picture = slope * abs + offset, and abs = (x + picture) / desk * ABS_MAX. */
@@ -237,7 +253,12 @@ export async function findScreen(
   const x = Math.round(-fx.offset);
   const y = Math.round(-fy.offset);
   /* Within a few pixels of the picture itself: one screen, nothing to correct. */
-  if (Math.abs(deskW - w) < w * 0.03 && Math.abs(deskH - h) < h * 0.03 && Math.abs(x) < 16 && Math.abs(y) < 16) {
+  if (
+    Math.abs(deskW - w) < w * 0.03 &&
+    Math.abs(deskH - h) < h * 0.03 &&
+    Math.abs(x) < 16 &&
+    Math.abs(y) < 16
+  ) {
     return null;
   }
   /* The desktop must hold this whole screen. When it does not, something
@@ -250,4 +271,30 @@ export async function findScreen(
     );
   }
   return { deskW, deskH, x: Math.max(0, x), y: Math.max(0, y) };
+}
+
+/** The sweep on the console's own picture and pointer. */
+export function findScreen(
+  control: Control,
+  pic: Picture,
+  onStep?: (n: number, of: number) => void,
+): Promise<ScreenWindow | null> {
+  const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
+  return sweep(
+    {
+      width: pic.width,
+      height: pic.height,
+      move: (ax, ay) => control.mouseAbsolute(0, ax, ay),
+      snap: () => {
+        pic.refresh();
+        return pic.ctx.getImageData(0, 0, pic.width, pic.height).data;
+      },
+      wait: async (ms) => {
+        await new Promise((r) => setTimeout(r, ms));
+        await frame();
+      },
+      now: () => performance.now(),
+    },
+    onStep,
+  );
 }

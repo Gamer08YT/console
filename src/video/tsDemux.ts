@@ -1,7 +1,7 @@
 /*
  * Just enough MPEG-TS to play the device's recordings: find the H.264 stream,
- * and the AAC one when the recording has sound, and hand back one access unit
- * per PES packet, with its PTS.
+ * and the sound when the recording has it - Opus, or AAC in recordings made
+ * before 0.68 - and hand back one access unit per PES packet, with its PTS.
  *
  * The recorder writes one frame per PES packet, so a PES packet is a frame. The
  * input can start anywhere - a seek fetches from the middle of a file - so the
@@ -16,7 +16,8 @@ export interface AccessUnit {
   /** 90 kHz presentation time. */
   pts: number;
   data: Uint8Array;
-  /** An AAC frame with its ADTS header, not a picture. */
+  /** Sound, not a picture: an AAC frame with its ADTS header, or an Opus
+   *  packet behind its control header (see opusPacket). */
   audio?: boolean;
 }
 
@@ -123,7 +124,9 @@ export class TsDemuxer {
     if (start && payload[0] === 0 && payload[1] === 0 && payload[2] === 1) {
       const streamId = payload[3];
       if (this.#videoPid < 0 && streamId >= 0xe0 && streamId <= 0xef) this.#videoPid = pid;
-      if (this.#audioPid < 0 && streamId >= 0xc0 && streamId <= 0xdf) this.#audioPid = pid;
+      /* 0xbd, private stream 1, is how Opus is carried. */
+      const sound = (streamId >= 0xc0 && streamId <= 0xdf) || streamId === 0xbd;
+      if (this.#audioPid < 0 && sound) this.#audioPid = pid;
     }
     const audio = pid === this.#audioPid;
     if (pid !== this.#videoPid && !audio) return;
@@ -175,10 +178,47 @@ export class TsDemuxer {
       const pid = ((s[i + 1] & 0x1f) << 8) | s[i + 2];
       const esInfo = ((s[i + 3] & 0x0f) << 8) | s[i + 4];
       if (type === 0x1b) this.#videoPid = pid;
-      if (type === 0x0f) this.#audioPid = pid;
+      if (type === 0x0f || (type === 0x06 && isOpus(s.subarray(i + 5, i + 5 + esInfo)))) {
+        this.#audioPid = pid;
+      }
       i += 5 + esInfo;
     }
   }
+}
+
+/* A registration descriptor that says 'Opus' among a stream's descriptors. */
+function isOpus(d: Uint8Array): boolean {
+  for (let i = 0; i + 2 <= d.length; i += 2 + d[i + 1]) {
+    if (d[i] === 0x05 && d[i + 1] >= 4 && String.fromCharCode(...d.subarray(i + 2, i + 6)) === "Opus") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The Opus packet in a sound access unit: past its control header (a 0x3ff
+ * prefix, flags, the size as 255s and the rest, the trims and an extension
+ * when flagged). Null when the unit is not Opus.
+ */
+export function opusPacket(d: Uint8Array): Uint8Array | null {
+  if (d.length < 3 || d[0] !== 0x7f || (d[1] & 0xe0) !== 0xe0) return null;
+  let at = 2;
+  let size = 0;
+  for (;;) {
+    if (at >= d.length) return null;
+    const v = d[at++];
+    size += v;
+    if (v !== 255) break;
+  }
+  if (d[1] & 0x10) at += 2;
+  if (d[1] & 0x08) at += 2;
+  if (d[1] & 0x04) {
+    if (at >= d.length) return null;
+    at += 1 + d[at];
+  }
+  if (size === 0 || at + size > d.length) return null;
+  return d.subarray(at, at + size);
 }
 
 /** The largest PTS in a stretch of a TS file: the tail gives the duration. */
