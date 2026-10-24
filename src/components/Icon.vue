@@ -140,6 +140,23 @@ const PATHS = {
   download: ["M12 4v11", "M7 10l5 5 5-5", "M5 20h14"],
   /* A chevron pointing down: pull something out from the top. */
   "chevron-down": ["M6 9l6 6 6-6"],
+  /* Leaving full screen: four corners pointing in. */
+  minimize: ["M8 3v3a2 2 0 0 1-2 2H3", "M21 8h-3a2 2 0 0 1-2-2V3", "M3 16h3a2 2 0 0 1 2 2v3", "M16 21v-3a2 2 0 0 1 2-2h3"],
+  /* A mouse with its left or right button marked: a click of that button. */
+  "mouse-left": [
+    "M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6z",
+    "M6 10.5h12M12 3v7.5",
+    "M7.6 7.4v3.1M9.2 5.2v5.3M10.7 4.2v6.3",
+  ],
+  "mouse-right": [
+    "M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6z",
+    "M6 10.5h12M12 3v7.5",
+    "M16.4 7.4v3.1M14.8 5.2v5.3M13.3 4.2v6.3",
+  ],
+  /* Four arrows around a point: the arrow keys. */
+  arrows: ["M9 6l3-3 3 3", "M9 18l3 3 3-3", "M6 9l-3 3 3 3", "M18 9l3 3-3 3", "M12 12h.01"],
+  /* A joystick: the knob, its shaft and the base. */
+  stick: ["M12 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z", "M12 9v8", "M5 17h14v4H5z"],
   trash: ["M4 7h16", "M10 11v6M14 11v6", "M6 7l1 13h10l1-13", "M9 7V4h6v3"],
   captions: ["M3 5h18v14H3z", "M7 15h4M13 15h4M7 11h2M11 11h6"],
   external: ["M14 4h6v6", "M20 4l-9 9", "M18 14v6H4V6h6"],

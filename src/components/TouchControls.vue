@@ -11,6 +11,7 @@
  * field never keeps its text - every input is intercepted and re-sent as HID.
  */
 import { onUnmounted, ref } from "vue";
+import Icon from "./Icon.vue";
 
 
 import { charToHid } from "../layouts";
@@ -18,8 +19,16 @@ import { usageForCode } from "../input/keymap";
 import type { Control } from "../input/control";
 import { haptic } from "../ui/haptic";
 
-const props = defineProps<{ control: Control; layout: string; stick: boolean }>();
-const emit = defineEmits<{ stick: [on: boolean] }>();
+const props = defineProps<{
+  control: Control;
+  layout: string;
+  stick: boolean;
+  /* The keyboard button opens the console's own keyboard (the setting
+     ui_touch_kbd), which the page shows and reports as open. */
+  consoleKeyboard: boolean;
+  consoleKeyboardOpen: boolean;
+}>();
+const emit = defineEmits<{ stick: [on: boolean]; keyboard: [] }>();
 
 /* Key positions that are not characters. */
 const ENTER = 0x28;
@@ -130,6 +139,10 @@ function padRelease() {
 onUnmounted(padRelease);
 
 function toggleKeyboard() {
+  if (props.consoleKeyboard) {
+    emit("keyboard");
+    return;
+  }
   if (oskOpen.value) {
     field.value?.blur();
   } else {
@@ -160,16 +173,21 @@ function toggleKeyboard() {
     </div>
 
     <div class="touch-row">
-      <button type="button" class="touch-btn" @click="tap(1)">Left</button>
-      <button type="button" class="touch-btn" @click="tap(2)">Right</button>
+      <button type="button" class="touch-btn" aria-label="Left click" title="Left click" @click="tap(1)">
+        <Icon name="mouse-left" :size="22" />
+      </button>
+      <button type="button" class="touch-btn" aria-label="Right click" title="Right click" @click="tap(2)">
+        <Icon name="mouse-right" :size="22" />
+      </button>
       <button
         type="button"
         class="touch-btn"
         :class="{ 'touch-btn-on': padOpen }"
         aria-label="Arrow keys"
+        title="Arrow keys, Esc, Tab and Enter"
         @click="padOpen = !padOpen"
       >
-        Keys
+        <Icon name="arrows" :size="22" />
       </button>
       <button
         type="button"
@@ -180,15 +198,17 @@ function toggleKeyboard() {
         :aria-pressed="stick"
         @click="emit('stick', !stick)"
       >
-        Stick
+        <Icon name="stick" :size="22" />
       </button>
       <button
         type="button"
         class="touch-btn"
-        :class="{ 'touch-btn-on': oskOpen }"
+        :class="{ 'touch-btn-on': consoleKeyboard ? consoleKeyboardOpen : oskOpen }"
+        aria-label="Keyboard"
+        :title="consoleKeyboard ? 'The console\'s keyboard' : 'The phone\'s keyboard'"
         @click="toggleKeyboard"
       >
-        Keyboard
+        <Icon name="keyboard" :size="22" />
       </button>
     </div>
 
@@ -251,9 +271,12 @@ function toggleKeyboard() {
 }
 
 .touch-btn {
-  min-width: 64px;
-  min-height: 40px;
-  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  min-height: 44px;
+  padding: 0 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--bg-raised);

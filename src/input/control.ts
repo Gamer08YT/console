@@ -19,6 +19,7 @@
  * The device serves one control client at a time and drops whatever was held
  * down when the socket closes, so reconnecting is always safe.
  */
+import { sendMove } from "./moveChannel";
 
 export const ABS_MAX = 32767;
 
@@ -155,6 +156,7 @@ export class Control {
           known: true,
         });
       } else if (b[0] === MSG_CONTROL && b.length >= 2) {
+        this.#inControl = b[1] === 1;
         this.#handlers.onControl(b[1] === 1 ? "you" : b[1] === 2 ? "free" : "held");
       } else if (b[0] === MSG_UPDATE && b.length >= 3) {
         const phases = ["receiving", "verifying", "restarting", "failed"] as const;
@@ -210,6 +212,19 @@ export class Control {
     if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(data.buffer as ArrayBuffer);
   }
 
+  /* Whether this client holds control; moves take the data channel only then,
+     since the WebSocket is what claims it. */
+  #inControl = false;
+  /* The buttons last sent; a move that changes them goes on the WebSocket. */
+  #buttons = 0;
+
+  #sendPointer(data: Uint8Array, buttons: number, wheel: number, pan: number) {
+    const plainMove = buttons === this.#buttons && wheel === 0 && pan === 0;
+    this.#buttons = buttons;
+    if (plainMove && this.#inControl && sendMove(data)) return;
+    this.#send(data);
+  }
+
   /*
    * A target with several screens: its absolute pointer spans the whole
    * desktop, and the picture is one screen of it. With a window set, a
@@ -236,7 +251,7 @@ export class Control {
     dv.setUint16(4, clamp(y, 0, ABS_MAX), true);
     dv.setInt8(6, clamp(wheel, -127, 127));
     dv.setInt8(7, clamp(pan, -127, 127));
-    this.#send(b);
+    this.#sendPointer(b, buttons, wheel, pan);
   }
 
   mouseRelative(buttons: number, dx: number, dy: number, wheel = 0, pan = 0) {
@@ -248,7 +263,7 @@ export class Control {
     dv.setInt16(4, clamp(dy, -32768, 32767), true);
     dv.setInt8(6, clamp(wheel, -127, 127));
     dv.setInt8(7, clamp(pan, -127, 127));
-    this.#send(b);
+    this.#sendPointer(b, buttons, wheel, pan);
   }
 
   keyboard(modifier: number, keys: number[]) {

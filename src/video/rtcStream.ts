@@ -15,6 +15,7 @@
  * WebSocket, which carries the same frames. See components/kvm_webrtc.
  */
 
+import { setMoveChannel } from "../input/moveChannel";
 import { Unauthorized, webrtcClose, webrtcOffer, webrtcSound } from "../state/device";
 import { playWhenAllowed } from "./sound";
 import { browserLag, type Handlers, transport } from "./stream";
@@ -105,6 +106,7 @@ export class RtcStream {
     if (this.#firstFrameTimer !== null) clearTimeout(this.#firstFrameTimer);
     if (this.#statsTimer !== null) clearInterval(this.#statsTimer);
     if (this.#id !== null) webrtcClose(this.#id);
+    setMoveChannel(null);
     this.#pc?.close();
     this.#pc = null;
     this.#video.srcObject = null;
@@ -135,6 +137,12 @@ export class RtcStream {
     const h264 = caps?.codecs.filter((c) => c.mimeType.toLowerCase() === "video/h264") ?? [];
     if (h264.length && tr.setCodecPreferences) tr.setCodecPreferences(h264);
     if (this.#handlers.audio) pc.addTransceiver("audio", { direction: "recvonly" });
+    /* Pointer moves, see input/moveChannel.ts. Negotiated with a fixed id, so
+       there is no open handshake for the device to answer. */
+    const dc = pc.createDataChannel("input", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+    dc.binaryType = "arraybuffer";
+    dc.onopen = () => setMoveChannel(dc);
+    dc.onclose = () => setMoveChannel(null);
 
     pc.ontrack = (ev) => {
       if (ev.track.kind === "audio") {

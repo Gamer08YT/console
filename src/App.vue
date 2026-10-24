@@ -1953,6 +1953,18 @@ const LED_BITS: Array<[number, string]> = [
     >
       <Icon name="chevron-down" :size="14" />
     </button>
+    <!-- A phone has no Esc key, and the tab above is easy to miss: leaving full
+         screen gets a button of its own there. -->
+    <button
+      v-if="immersive && !barsShown"
+      type="button"
+      class="immersive-exit"
+      aria-label="Leave full screen"
+      title="Leave full screen"
+      @click="toggleFullscreen"
+    >
+      <Icon name="minimize" :size="18" />
+    </button>
     <div v-if="firmwareChanged" class="update-banner" role="alert">
       <span>The device was updated. Reload to get the matching console.</span>
       <button type="button" class="btn btn-sm" @click="reloadConsole()">Reload</button>
@@ -2279,7 +2291,10 @@ const LED_BITS: Array<[number, string]> = [
             :control="input.control"
             :layout="layout"
             :stick="stickOn"
+            :console-keyboard="values.ui_touch_kbd !== 1"
+            :console-keyboard-open="oskOpen"
             @stick="stickOn = $event"
+            @keyboard="oskOpen = !oskOpen"
           />
           <PointerStick v-if="stickAt" :at="stickAt" />
         </div>

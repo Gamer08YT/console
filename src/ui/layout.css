@@ -668,6 +668,32 @@
   opacity: 1;
 }
 
+/* Only where the input is a finger: with a mouse, Esc and the bars do it. */
+.immersive-exit {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .immersive-exit {
+    position: fixed;
+    z-index: 31;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
+    color: var(--text);
+    opacity: 0.6;
+    cursor: pointer;
+  }
+}
+
 @media (max-width: 640px) {
   /* On a phone the rail is a row under the status strip. */
   .console.immersive .rail {

@@ -38,6 +38,11 @@ export interface InputOptions {
 }
 
 const MAX_KEYS = 6;
+/** Shortest gap between two pointer moves sent to the device. 8 ms is still
+ *  twice the rate a 60 Hz pointermove gives; 4 loaded a device reached over
+ *  Tailscale, where every packet is encrypted once more, until its sound
+ *  stuttered. */
+const MOVE_GAP_MS = 8;
 
 export function useInput(opts: InputOptions) {
   const target = ref<TargetState>({ attached: false, busAlive: false, leds: 0, known: false });
@@ -148,12 +153,48 @@ export function useInput(opts: InputOptions) {
     const tracking = () =>
       opts.engaged.value || (opts.engageMode.value === "hover" && !relative());
 
-    const onMove = (e: PointerEvent) => {
+    /*
+     * Chrome hands out pointermove once per display frame, up to 16 ms after
+     * the mouse moved. pointerrawupdate comes as the mouse reports, up to
+     * 1000 times a second, so it is sent at most every MOVE_GAP_MS: the first
+     * move after a pause goes at once, the last one of a burst after the gap.
+     * Relative motion inside the gap is added up; for an absolute position
+     * only the last one counts.
+     */
+    const raw = "onpointerrawupdate" in window;
+    const moveEvent = raw ? "pointerrawupdate" : "pointermove";
+    let lastSent = 0;
+    let pending: PointerEvent | null = null;
+    let pendDx = 0;
+    let pendDy = 0;
+    let timer = 0;
+    const flush = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = 0;
+      const e = pending;
+      pending = null;
+      if (!e) return;
+      lastSent = performance.now();
+      onMove(e, pendDx, pendDy);
+      pendDx = pendDy = 0;
+    };
+    const onRaw = (e: Event) => {
+      const pe = e as PointerEvent;
+      pending = pe;
+      pendDx += pe.movementX || 0;
+      pendDy += pe.movementY || 0;
+      if (timer) return;
+      const wait = lastSent + MOVE_GAP_MS - performance.now();
+      if (!raw || wait <= 0) flush();
+      else timer = window.setTimeout(flush, wait);
+    };
+
+    const onMove = (e: PointerEvent, dx: number, dy: number) => {
       if (!tracking()) return;
       /* Relative needs no position - and with the pointer locked there is
          none, the browser keeps it pinned where the lock began. */
       if (relative() && opts.engaged.value) {
-        control.mouseRelative(buttonsOf(e), e.movementX || 0, e.movementY || 0);
+        control.mouseRelative(buttonsOf(e), dx, dy);
         return;
       }
       const p = mapToTarget(e);
@@ -170,6 +211,9 @@ export function useInput(opts: InputOptions) {
      * pressed on the target, which is the machine the operator is sitting at.
      */
     const onButton = (e: PointerEvent) => {
+      /* A held-back move carries the buttons as they were before this one;
+         sent after it, it would undo the press or the release. */
+      flush();
       const b = buttonsOf(e);
       if (!opts.engaged.value && !(buttonsHeld && b === 0)) return;
       buttonsHeld = b;
@@ -217,7 +261,7 @@ export function useInput(opts: InputOptions) {
       if (document.visibilityState === "hidden") onCancel();
     };
 
-    el.addEventListener("pointermove", onMove);
+    el.addEventListener(moveEvent, onRaw);
     el.addEventListener("pointerdown", onButton);
     el.addEventListener("wheel", onWheel, { passive: false });
     el.addEventListener("contextmenu", onContext);
@@ -227,7 +271,10 @@ export function useInput(opts: InputOptions) {
     document.addEventListener("visibilitychange", onHidden);
 
     onCleanup(() => {
-      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener(moveEvent, onRaw);
+      if (timer) window.clearTimeout(timer);
+      timer = 0;
+      pending = null;
       el.removeEventListener("pointerdown", onButton);
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("contextmenu", onContext);
