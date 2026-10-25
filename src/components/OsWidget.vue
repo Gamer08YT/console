@@ -3,16 +3,20 @@
  * The guessed target OS as a rail button above Settings: the button shows the OS
  * icon, a click opens the raw USB fingerprint the guess was inferred from beside
  * the rail. Only present once a target is attached over USB and the guess is
- * something other than unknown. The `side` prop is the rail's edge so the popup
- * opens inward over the stage, matching the diagnostics widget below it.
+ * something other than unknown. A Nintendo Switch or a Steam Deck is known from
+ * HDMI-CEC instead, and shown while it is the HDMI source, with the USB
+ * fingerprint under it. The `side` prop is the rail's edge so the popup opens
+ * inward over the stage, matching the diagnostics widget below it.
  */
 import { computed, ref } from "vue";
 
 import OsIcon from "./OsIcon.vue";
-import type { UsbProbe } from "../state/device";
+import type { CecDevice, UsbProbe } from "../state/device";
+import { targetKind } from "../state/targetKind";
 
 const props = defineProps<{
   probe: UsbProbe | null;
+  cec: CecDevice | null;
   attached: boolean;
   side: "left" | "right";
 }>();
@@ -24,41 +28,52 @@ const OS_NAMES: Record<string, string> = {
   macos: "macOS",
   linux: "Linux",
   android: "Android",
+  switch: "Nintendo Switch",
+  steamdeck: "Steam Deck",
 };
 
+const target = computed(() => targetKind(props.probe, props.cec));
 const show = computed(
-  () => props.attached && !!props.probe && props.probe.os !== "unknown",
+  () => target.value.from === "cec" || (props.attached && target.value.kind !== "unknown"),
 );
-const name = computed(() =>
-  props.probe ? (OS_NAMES[props.probe.os] ?? props.probe.os) : "",
-);
+const name = computed(() => OS_NAMES[target.value.kind] ?? target.value.kind);
+const usbName = computed(() => OS_NAMES[props.probe?.os ?? ""] ?? props.probe?.os);
 </script>
 
 <template>
-  <div class="ow" :data-side="side" v-if="show && probe">
+  <div class="ow" :data-side="side" v-if="show">
     <button
       type="button"
       class="rail-btn ow-btn"
       :class="{ 'rail-btn-active': open }"
-      :title="`Target looks like ${name} - click for the USB fingerprint`"
+      :title="target.from === 'cec' ? `Target: ${name}` : `Target looks like ${name} - click for the USB fingerprint`"
       :aria-label="`Target OS: ${name}`"
       @click="open = !open"
     >
-      <OsIcon :os="probe.os" />
+      <OsIcon :os="target.kind" />
     </button>
 
     <template v-if="open">
       <div class="ow-backdrop" @click="open = false" />
       <div class="ow-popup">
         <div class="ow-head">
-          <OsIcon :os="probe.os" />
-          Looks like <strong>{{ name }}</strong>
+          <OsIcon :os="target.kind" />
+          <template v-if="target.from === 'cec'">This is <strong>{{ name }}</strong></template>
+          <template v-else>Looks like <strong>{{ name }}</strong></template>
         </div>
-        <p>
-          Inferred from how the target enumerated over USB. If that is wrong,
-          send us this fingerprint so a later build can learn it:
+        <p v-if="target.from === 'cec'">
+          It names itself over HDMI-CEC: {{ cec?.name || "no name" }}, vendor {{ cec?.vendor }}.
         </p>
-        <pre class="fingerprint">{{ probe.trace }}</pre>
+        <template v-if="probe && attached">
+          <p v-if="target.from === 'cec'">
+            Over USB it looks like {{ probe.os === "unknown" ? "nothing known" : usbName }}:
+          </p>
+          <p v-else>
+            Inferred from how the target enumerated over USB. If that is wrong,
+            send this fingerprint in an issue so a later build can learn it:
+          </p>
+          <pre class="fingerprint">{{ probe.trace }}</pre>
+        </template>
       </div>
     </template>
   </div>

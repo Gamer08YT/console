@@ -42,6 +42,20 @@ defineProps<{ os: string }>();
     <circle cx="14.4" cy="11.5" r="0.9" fill="var(--bg-raised, #161b22)" stroke="none" />
   </svg>
 
+  <!-- Nintendo Switch: a handheld, screen between two grips -->
+  <svg v-else-if="os === 'switch'" class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M6.5 5H8v14H6.5A3.5 3.5 0 0 1 3 15.5v-7A3.5 3.5 0 0 1 6.5 5zM16 5h1.5A3.5 3.5 0 0 1 21 8.5v7a3.5 3.5 0 0 1-3.5 3.5H16z" />
+    <rect x="9" y="5" width="6" height="14" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.6" />
+    <circle cx="5.6" cy="9" r="1.1" fill="var(--bg-raised, #161b22)" />
+    <circle cx="18.4" cy="14.5" r="1.1" fill="var(--bg-raised, #161b22)" />
+  </svg>
+
+  <!-- Steam Deck: a half ring around a dot -->
+  <svg v-else-if="os === 'steamdeck'" class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M14.75 3.5a8.5 8.5 0 0 0 0 17" fill="none" stroke="currentColor" stroke-width="3" />
+    <circle cx="14.75" cy="12" r="4.6" />
+  </svg>
+
   <!-- unknown: a plain monitor -->
   <svg v-else class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <rect x="3" y="4" width="18" height="12" rx="2" />

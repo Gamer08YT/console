@@ -2188,6 +2188,7 @@ const LED_BITS: Array<[number, string]> = [
         />
         <OsWidget
           :probe="usbProbe"
+          :cec="cecSource"
           :attached="input.target.value.attached"
           :side="uiRight ? 'right' : 'left'"
         />
