@@ -53,6 +53,126 @@ type Json = Record<string, unknown>;
 /* Settings the visitor changes live here, so toggles and dropdowns behave. */
 let settings: Json = { ...(settingsFixture as Json) };
 
+/* Device profiles as the firmware keeps them (kvm_config/kvm_profiles.c):
+   `settings` is Default, a profile holds only its own values. */
+interface DemoProfile {
+  id: number;
+  name: string;
+  match?: { cecName: string; cecVendor: string; usbOs: string };
+  set?: Json;
+}
+const PROFILE_KEYS = new Set(
+  (schema as { settings: { key: string; profile?: boolean }[] }).settings
+    .filter((x) => x.profile)
+    .map((x) => x.key),
+);
+const PRESETS = [
+  {
+    id: "steamdeck",
+    name: "Steam Deck",
+    match: { cecName: "Steam Deck", cecVendor: "e0319e", usbOs: "" },
+    set: { target_os: 3, mouse_mode: 1, ptr_desk_w: 0, ptr_desk_h: 0 },
+  },
+  {
+    id: "switch",
+    name: "Nintendo Switch",
+    match: { cecName: "Nintendo", cecVendor: "0009bf", usbOs: "" },
+    set: { usb_pad: 2 },
+  },
+  {
+    id: "androidtv",
+    name: "Android TV",
+    match: { cecName: "", cecVendor: "", usbOs: "android" },
+    set: { target_os: 4, mouse_mode: 1 },
+  },
+  {
+    id: "mitvstick",
+    name: "Mi TV Stick",
+    match: { cecName: "Mi TV Stick", cecVendor: "", usbOs: "" },
+    set: { target_os: 4, mouse_mode: 1 },
+  },
+];
+let profileActive = 0;
+let profileManual = false;
+let profileList: DemoProfile[] = [{ id: 0, name: "Default" }];
+
+function activeDemoProfile(): DemoProfile | undefined {
+  return profileList.find((p) => p.id === profileActive);
+}
+
+/** What /api/v1/settings shows: Default with the active profile's values over it. */
+function effectiveSettings(): Json {
+  return { ...settings, ...(activeDemoProfile()?.set ?? {}) };
+}
+
+function profilesJson(): Json {
+  return {
+    active: profileActive,
+    manual: profileManual,
+    max: 8,
+    profiles: profileList,
+    presets: PRESETS,
+    seen: { cecName: "", cecVendor: "", usbOs: "linux" },
+    reboot: false,
+  };
+}
+
+async function demoProfiles(path: string, body: Json): Promise<Response> {
+  const id = Number(body.id ?? -1);
+  const found = profileList.find((p) => p.id === id);
+  switch (path) {
+    case "/api/v1/profiles": {
+      if (profileList.length > 8) return json({ error: "there are already 8 profiles" }, 409);
+      const from = String(body.from ?? "current");
+      const preset = PRESETS.find((p) => p.id === from);
+      if (!preset && from !== "current" && from !== "empty") return json({ error: `no preset '${from}'` }, 404);
+      let next = 1;
+      while (profileList.some((p) => p.id === next)) next++;
+      const copy = from === "current" ? { ...(activeDemoProfile()?.set ?? {}) } : {};
+      profileList = [
+        ...profileList,
+        {
+          id: next,
+          name: String(body.name || preset?.name || "New profile"),
+          match: (body.match as DemoProfile["match"]) ??
+            (preset ? { ...preset.match } : { cecName: "", cecVendor: "", usbOs: "" }),
+          set: preset ? { ...preset.set } : copy,
+        },
+      ].sort((a, b) => a.id - b.id);
+      if (body.select !== false) {
+        profileActive = next;
+        profileManual = true;
+      }
+      return json(profilesJson());
+    }
+    case "/api/v1/profiles/update": {
+      if (id === 0) return json({ error: "Default is changed through /api/v1/settings" }, 409);
+      if (!found) return json({ error: `no profile ${id}` }, 404);
+      if (typeof body.name === "string" && body.name) found.name = body.name;
+      if (body.match) found.match = body.match as DemoProfile["match"];
+      const set: Json = { ...(found.set ?? {}), ...((body.set as Json) ?? {}) };
+      for (const k of (body.unset as string[]) ?? []) delete set[k];
+      found.set = set;
+      return json(profilesJson());
+    }
+    case "/api/v1/profiles/delete":
+      if (id === 0) return json({ error: "Default cannot be deleted" }, 409);
+      if (!found) return json({ error: "no such profile" }, 404);
+      profileList = profileList.filter((p) => p !== found);
+      if (profileActive === id) {
+        profileActive = 0;
+        profileManual = false;
+      }
+      return json(profilesJson());
+    case "/api/v1/profiles/select":
+      if (!found) return json({ error: "no such profile" }, 404);
+      profileActive = id;
+      profileManual = true;
+      return json(profilesJson());
+  }
+  return json({ error: "not found" }, 404);
+}
+
 /* The card's contents, so an uploaded image joins the list. */
 let images: Json = { ...(storageImages as Json) };
 
@@ -403,13 +523,15 @@ async function route(
         return json(pins);
       case "/api/v1/settings":
         syncMedia();
-        return json(settings);
+        return json(search.includes("profile=default") ? settings : effectiveSettings());
+      case "/api/v1/profiles":
+        return json(profilesJson());
       case "/api/v1/settings/schema":
         return json(schema);
       case "/api/v1/system/info":
         return json(liveInfo());
       case "/api/v1/video/status":
-        return json(liveStatus());
+        return json({ ...liveStatus(), profile: profileActive });
       case "/api/v1/storage/images":
         syncMedia();
         return json(images);
@@ -520,8 +642,21 @@ async function route(
     return null;
   }
 
+  if (method === "POST" && path.startsWith("/api/v1/profiles")) {
+    return demoProfiles(path, (await bodyJson(init, req)) as Json);
+  }
   if (method === "PUT" && path === "/api/v1/settings") {
-    const patch = await bodyJson(init, req);
+    const patch = { ...((await bodyJson(init, req)) as Json) };
+    /* Under a profile of one's own its keys go to it, as on the device. */
+    const own = activeDemoProfile();
+    if (own && own.id !== 0) {
+      const now = effectiveSettings();
+      for (const k of Object.keys(patch)) {
+        if (!PROFILE_KEYS.has(k)) continue;
+        if (patch[k] !== now[k]) own.set = { ...(own.set ?? {}), [k]: patch[k] };
+        delete patch[k];
+      }
+    }
     settings = { ...settings, ...patch };
     /* Mirror the device: the two VPN backends are mutually exclusive, so enabling
        one turns the other off (the VPN selector relies on this). */
@@ -537,7 +672,7 @@ async function route(
        the setting, so the two have to stay in step - otherwise the choice looks
        like it fell back to "ejected" the next time the list is fetched. */
     images = { ...images, active: String(settings.msc_image ?? "") };
-    return json(settings);
+    return json(effectiveSettings());
   }
   if (method === "POST" && path === "/api/v1/storage/fetch") {
     const body = (await bodyJson(init, req)) as { url?: string; dest?: string; name?: string };

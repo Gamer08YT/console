@@ -23,6 +23,8 @@ import {
   getTlsStatus,
   installCert,
   loadPins,
+  loadValues,
+  loadDefaultValues,
   type HeaderPin,
   resetSettings,
   restartDevice,
@@ -48,6 +50,16 @@ import { TIME_ZONES, browserZone, zoneName, zoneOptions } from "../state/timezon
 import { toast } from "../state/toasts";
 import TwoFactor from "./TwoFactor.vue";
 import ScreenLayout from "./ScreenLayout.vue";
+import ProfileBar from "./ProfileBar.vue";
+import {
+  activeProfile,
+  createProfile,
+  loadProfiles,
+  selectProfile,
+  ownValue,
+  profiles,
+  updateProfile,
+} from "../state/profiles";
 
 /* Groups that need something wired, and where the wiring is written up. */
 const GROUP_DOCS: Record<string, string> = {
@@ -221,6 +233,23 @@ function toggleHelp(key: string) {
 async function resetSetting(setting: Setting) {
   await write(setting.key, setting.default);
 }
+
+/* The active profile's own value dropped: the setting follows Default again. */
+async function backToDefault(setting: Setting) {
+  const p = activeProfile(profiles.value);
+  if (!p) return;
+  busy.value = true;
+  try {
+    await updateProfile(p.id, { unset: [setting.key] });
+    emit("values", await loadValues());
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    busy.value = false;
+  }
+}
+
+const profileName = computed(() => activeProfile(profiles.value)?.name ?? "");
 
 /* ---- GPIO pin map --------------------------------------------------------
  * The device reports which pins its fixed peripherals reserve; the rest of the
@@ -511,6 +540,10 @@ async function write(key: string, value: number | string | boolean) {
   busy.value = true;
   try {
     emit("values", await saveSettings({ [key]: value }));
+    /* A write under a profile of one's own may have given it a value. */
+    if (profiles.value && profiles.value.active !== 0) {
+      await loadProfiles();
+    }
   } catch (err) {
     toast.error(err instanceof Error ? err.message : String(err));
   } finally {
@@ -640,10 +673,26 @@ async function doRestart() {
 const importReport = ref<string[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 
-function doExport() {
-  const file = buildFile(props.values, props.schema, {
+/* Under a device profile the values in effect are not Default's, so those
+   are asked for; the profiles go in beside them. */
+async function defaultsAndProfiles() {
+  try {
+    const list = await loadProfiles();
+    return {
+      defaults: list.active !== 0 ? await loadDefaultValues() : props.values,
+      list,
+    };
+  } catch {
+    return { defaults: props.values, list: null }; /* firmware without profiles */
+  }
+}
+
+async function doExport() {
+  const { defaults, list } = await defaultsAndProfiles();
+  const file = buildFile(defaults, props.schema, {
     firmware: props.firmware,
     board: pinInfo.value?.board,
+    profiles: list?.profiles,
   });
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(file, null, 2)], { type: "application/json" }),
@@ -664,16 +713,18 @@ async function onSettingsFile(e: Event) {
   input.value = ""; /* so the same file can be picked again after a fix */
   if (!chosen) return;
   let plan: ImportPlan;
+  const { defaults, list } = await defaultsAndProfiles();
   try {
-    plan = planImport(readFile(await chosen.text()), props.schema, props.values, {
+    plan = planImport(readFile(await chosen.text()), props.schema, defaults, {
       board: pinInfo.value?.board,
     });
+    if (!list) plan.profiles = [];
   } catch (err) {
     toast.error(err instanceof Error ? err.message : String(err));
     return;
   }
   importReport.value = [];
-  if (!Object.keys(plan.apply).length) {
+  if (!Object.keys(plan.apply).length && !plan.profiles.length) {
     importReport.value = describePlan(plan, false);
     toast.info("Nothing in that file to change");
     return;
@@ -681,7 +732,20 @@ async function onSettingsFile(e: Event) {
   if (!confirm(`Apply this file?\n\n${describePlan(plan, false).join("\n\n")}`)) return;
   busy.value = true;
   try {
-    emit("values", await saveSettings(plan.apply));
+    /* The file's values are Default's: written with Default active, or a
+       profile's own keys would take them. */
+    const was = list?.active ?? 0;
+    if (Object.keys(plan.apply).length) {
+      if (was !== 0) await selectProfile(0);
+      await saveSettings(plan.apply);
+    }
+    for (const p of plan.profiles) {
+      const same = list?.profiles.find((x) => x.id !== 0 && x.name === p.name);
+      if (same) await updateProfile(same.id, { match: p.match, set: p.set });
+      else await createProfile("empty", p.name, p.match, p.set, false);
+    }
+    if (was !== 0 && Object.keys(plan.apply).length) await selectProfile(was);
+    emit("values", await loadValues());
     importReport.value = describePlan(plan, true);
     toast.info("Settings loaded from the file");
   } catch (err) {
@@ -818,6 +882,7 @@ async function doRevertCert() {
       <!-- Everything but the section list: its own column in the window, the
            whole width in the panel. -->
       <div class="settings-main">
+        <ProfileBar @values="(v) => emit('values', v)" />
         <div class="settings-find">
           <!-- Named and marked off, or a browser takes the box above a password
                field for a username box and fills in the saved login. -->
@@ -909,6 +974,12 @@ async function doRevertCert() {
                   title="Applies after a restart"
                   >restart</span
                 >
+                <span
+                  v-if="ownValue(profiles, s.key)"
+                  class="badge badge-profile"
+                  :title="`The profile ${profileName} has its own value`"
+                  >{{ profileName }}</span
+                >
                 <span class="setting-head-actions">
                   <button
                     v-if="s.help"
@@ -922,7 +993,18 @@ async function doRevertCert() {
                     <Icon name="info" :size="14" />
                   </button>
                   <button
-                    v-if="isChanged(s) && !blockedFor(s)"
+                    v-if="ownValue(profiles, s.key)"
+                    type="button"
+                    class="icon-btn"
+                    :aria-label="`${s.title} as in Default`"
+                    title="As in Default"
+                    :disabled="busy"
+                    @click="backToDefault(s)"
+                  >
+                    <Icon name="undo" :size="14" />
+                  </button>
+                  <button
+                    v-else-if="isChanged(s) && !blockedFor(s)"
                     type="button"
                     class="icon-btn"
                     :aria-label="`Put ${s.title} back to the factory value`"

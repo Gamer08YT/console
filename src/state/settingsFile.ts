@@ -6,6 +6,7 @@
  */
 
 import type { Setting, Values } from "./device";
+import type { Profile, ProfileMatch } from "./profiles";
 
 export const FILE_KIND = "espkvm-settings";
 export const FILE_VERSION = 1;
@@ -37,7 +38,17 @@ export interface SettingsFile {
   board?: string;
   /** Written into the file for whoever opens it in a text editor. */
   note: string;
+  /** Default's values. */
   values: Values;
+  /** Device profiles besides Default, each with only its own values. Optional:
+      older files have none, and an older console ignores it. */
+  profiles?: FileProfile[];
+}
+
+export interface FileProfile {
+  name: string;
+  match?: ProfileMatch;
+  set: Values;
 }
 
 const NOTE =
@@ -46,11 +57,14 @@ const NOTE =
   "broker, and the VPN peer, meaning its endpoint and its public key. Treat it as you " +
   "would a router's config before posting it anywhere.";
 
-/** Everything this device is willing to hand over, plus enough to read it later. */
+/**
+ * Everything this device is willing to hand over, plus enough to read it later.
+ * @param values Default's values (not the ones in effect under a profile)
+ */
 export function buildFile(
   values: Values,
   schema: Setting[],
-  meta: { firmware?: string; board?: string; now?: Date } = {},
+  meta: { firmware?: string; board?: string; now?: Date; profiles?: Profile[] } = {},
 ): SettingsFile {
   const known = new Set(schema.filter((s) => !s.secret).map((s) => s.key));
   const out: Values = {};
@@ -65,6 +79,13 @@ export function buildFile(
     board: meta.board,
     note: NOTE,
     values: out,
+    ...(meta.profiles?.some((p) => p.id !== 0)
+      ? {
+          profiles: meta.profiles
+            .filter((p) => p.id !== 0)
+            .map((p) => ({ name: p.name, match: p.match, set: { ...(p.set ?? {}) } })),
+        }
+      : {}),
   };
 }
 
@@ -110,6 +131,9 @@ export interface ImportPlan {
   otherBoard: boolean;
   /** What this device calls itself, for the mismatch line. */
   board?: string;
+  /** Device profiles to make, or to update where one has the same name. Each
+      holds only values this firmware lets a profile hold, identity aside. */
+  profiles: FileProfile[];
 }
 
 export function planImport(
@@ -128,7 +152,18 @@ export function planImport(
     secrets: schema.filter((s) => s.secret).map((s) => s.key),
     otherBoard: Boolean(file.board && opts.board && file.board !== opts.board),
     board: opts.board,
+    profiles: [],
   };
+  for (const p of Array.isArray(file.profiles) ? file.profiles : []) {
+    if (!p || typeof p.name !== "string" || !p.name) continue;
+    const set: Values = {};
+    for (const [key, value] of Object.entries(p.set ?? {})) {
+      if (!byKey.get(key)?.profile) continue;
+      if (!opts.withIdentity && IDENTITY_KEYS.includes(key)) continue;
+      set[key] = value;
+    }
+    plan.profiles.push({ name: p.name.slice(0, 31), match: p.match, set });
+  }
   for (const [key, value] of Object.entries(file.values)) {
     const setting = byKey.get(key);
     if (!setting || setting.secret) {
@@ -158,6 +193,12 @@ export function describePlan(plan: ImportPlan, applied: boolean): string[] {
       : `${n} setting${n === 1 ? "" : "s"} would change.`,
   );
   if (plan.same.length) lines.push(`${plan.same.length} already had the value in the file.`);
+  if (plan.profiles.length) {
+    lines.push(
+      `Device profiles: ${plan.profiles.map((p) => p.name).join(", ")}. ` +
+        "One with the same name here is updated, the others are made.",
+    );
+  }
   if (plan.identity.length) {
     lines.push(
       `Left alone as this device's own: ${plan.identity.join(", ")}. ` +

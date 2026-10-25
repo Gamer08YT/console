@@ -80,6 +80,7 @@ import {
 } from "./state/device";
 import { loadSession, logout, type SessionState } from "./state/auth";
 import { toast } from "./state/toasts";
+import { loadProfiles, ownValue, profiles } from "./state/profiles";
 import { copyToClipboard } from "./ui/clipboard";
 
 type PanelId = "input" | "media" | "automation" | "captures" | null;
@@ -793,6 +794,12 @@ const padAloneLabel = computed(() =>
     : padAlone.value === "xbox"
       ? "an original Xbox gamepad"
       : "a Switch gamepad",
+);
+/* A device profile that set it meant it: no banner then. Otherwise it can be
+   closed for this visit. */
+const padAloneDismissed = ref(false);
+const showPadAlone = computed(
+  () => !!padAlone.value && !padAloneDismissed.value && !ownValue(profiles.value, "usb_pad"),
 );
 const bringingBack = ref(false);
 async function bringBackKeyboard() {
@@ -1564,6 +1571,22 @@ async function startConsole() {
      keeps working when the control socket is down - exactly when the operator
      most wants to know what the device thinks. */
   let reachable = true;
+  /* The device switches profiles by itself when another target is attached.
+     The pointer mode and the desk geometry come from the values, so they are
+     read again then, and the profile list with them. */
+  let lastProfile: number | undefined;
+  const followProfile = (id: number | undefined) => {
+    if (id === undefined || id === lastProfile) return;
+    const first = lastProfile === undefined;
+    lastProfile = id;
+    /* The list says which values the profile set itself (the gamepad banner
+       asks); under Default there is nothing to know. */
+    if (id !== 0 || profiles.value) loadProfiles().catch(() => {});
+    if (first) return;
+    loadValues()
+      .then((v) => (values.value = v))
+      .catch(() => {});
+  };
   /* Backs off while the device is unreachable. A console that keeps asking
      once a second is not free: several tabs left open on a device that is
      rebooting, or refusing a certificate, turn into a load that makes it
@@ -1578,6 +1601,7 @@ async function startConsole() {
       }
       interval = 1000;
       status.value = s;
+      followProfile(s.profile);
     } catch (err) {
       if (err instanceof Unauthorized) {
         /* Not a network problem: the device is answering, it just does not
@@ -1978,7 +2002,7 @@ const LED_BITS: Array<[number, string]> = [
       <span>{{ restartOutcome.text }}</span>
       <button type="button" class="btn btn-sm" @click="restartOutcome = null">Dismiss</button>
     </div>
-    <div v-if="padAlone" class="update-banner" role="status">
+    <div v-if="showPadAlone" class="update-banner" role="status">
       <span>
         Keyboard and mouse are off: the target sees {{ padAloneLabel }} only (Settings - Input -
         Gamepad). Right for a console, not for a computer.
@@ -1986,6 +2010,7 @@ const LED_BITS: Array<[number, string]> = [
       <button type="button" class="btn btn-sm btn-primary" :disabled="bringingBack" @click="bringBackKeyboard">
         Bring them back
       </button>
+      <button type="button" class="btn btn-sm" @click="padAloneDismissed = true">Dismiss</button>
     </div>
     <div v-if="showSlowH264" class="update-banner" role="status">
       <span>
@@ -2191,6 +2216,7 @@ const LED_BITS: Array<[number, string]> = [
           :cec="cecSource"
           :attached="input.target.value.attached"
           :side="uiRight ? 'right' : 'left'"
+          @values="values = $event"
         />
         <DiagWidget :system="system" :side="uiRight ? 'right' : 'left'" @live-log="logOpen = true" />
         <button

@@ -95,3 +95,44 @@ test("the secrets this device has are named, so nobody waits for a VPN that cann
   const plan = planImport(file, schema, values, { board: "p4-eth" });
   assert.deepEqual(plan.secrets, ["mqtt_pass"]);
 });
+
+const profSchema: Setting[] = [
+  ...schema,
+  { key: "mouse_mode", type: "enum", section: "input", label: "Pointer", profile: true },
+  { key: "ptr_desk_w", type: "int", section: "input", label: "Desktop width", profile: true },
+] as unknown as Setting[];
+
+test("device profiles travel with the file, Default stays out of the list", () => {
+  const file = buildFile(values, profSchema, {
+    profiles: [
+      { id: 0, name: "Default" },
+      { id: 1, name: "Steam Deck", match: { cecName: "Steam Deck", cecVendor: "", usbOs: "" }, set: { mouse_mode: 1 } },
+    ],
+  });
+  assert.deepEqual(file.profiles, [
+    { name: "Steam Deck", match: { cecName: "Steam Deck", cecVendor: "", usbOs: "" }, set: { mouse_mode: 1 } },
+  ]);
+  assert.equal(buildFile(values, profSchema, { profiles: [{ id: 0, name: "Default" }] }).profiles, undefined);
+});
+
+test("an imported profile keeps only what a profile may hold here", () => {
+  const file = readFile(
+    JSON.stringify({
+      kind: FILE_KIND,
+      version: FILE_VERSION,
+      values: {},
+      profiles: [{ name: "Deck", set: { mouse_mode: 1, ptr_desk_w: 0, net_hostname: "x", gone: 1 } }, { set: {} }],
+    }),
+  );
+  const plan = planImport(file, profSchema, values);
+  assert.deepEqual(plan.profiles, [{ name: "Deck", match: undefined, set: { mouse_mode: 1 } }]);
+  const withId = planImport(file, profSchema, values, { withIdentity: true });
+  assert.deepEqual(withId.profiles[0].set, { mouse_mode: 1, ptr_desk_w: 0 });
+});
+
+test("a file from before profiles plans as it always did", () => {
+  const file = readFile(JSON.stringify({ kind: FILE_KIND, version: 1, values: { vid_fps: 60 } }));
+  const plan = planImport(file, profSchema, values);
+  assert.deepEqual(plan.apply, { vid_fps: 60 });
+  assert.deepEqual(plan.profiles, []);
+});

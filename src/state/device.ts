@@ -42,6 +42,8 @@ export interface Setting {
   secret?: boolean;
   /** An INT that is a GPIO number: render a pin picker (free GPIOs + None). */
   pin?: boolean;
+  /** A device profile may hold its own value (see state/profiles.ts). */
+  profile?: boolean;
   /** Show this setting only while another setting equals a given value, e.g. the
    *  GC9A01's SPI pins appear only when the round LCD is the chosen display type. */
   showIf?: { key: string; eq: number };
@@ -152,6 +154,8 @@ export interface VideoStatus {
   record?: RecordStatus;
   /** Why a screenshot cannot be saved now, or null when it can. */
   screenshotBlocked?: string | null;
+  /** The active device profile's id. Absent on firmware without profiles. */
+  profile?: number;
 }
 
 export interface RecordStatus {
@@ -407,6 +411,11 @@ export async function loadSchema(): Promise<Schema> {
 
 export async function loadValues(): Promise<Values> {
   return getJson<Values>(SETTINGS_URL);
+}
+
+/** Default's values, whatever device profile is active (for an export). */
+export async function loadDefaultValues(): Promise<Values> {
+  return getJson<Values>(`${SETTINGS_URL}?profile=default`);
 }
 
 export async function loadCapabilities(): Promise<Record<string, Capability>> {

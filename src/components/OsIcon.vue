@@ -42,12 +42,17 @@ defineProps<{ os: string }>();
     <circle cx="14.4" cy="11.5" r="0.9" fill="var(--bg-raised, #161b22)" stroke="none" />
   </svg>
 
-  <!-- Nintendo Switch: a handheld, screen between two grips -->
+  <!-- Nintendo Switch: its logo, two Joy-Con, the left one outlined -->
   <svg v-else-if="os === 'switch'" class="os-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M6.5 5H8v14H6.5A3.5 3.5 0 0 1 3 15.5v-7A3.5 3.5 0 0 1 6.5 5zM16 5h1.5A3.5 3.5 0 0 1 21 8.5v7a3.5 3.5 0 0 1-3.5 3.5H16z" />
-    <rect x="9" y="5" width="6" height="14" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.6" />
-    <circle cx="5.6" cy="9" r="1.1" fill="var(--bg-raised, #161b22)" />
-    <circle cx="18.4" cy="14.5" r="1.1" fill="var(--bg-raised, #161b22)" />
+    <path
+      d="M8.6 3.7H10.55V20.3H8.6A4.4 4.4 0 0 1 4.2 15.9V8.1A4.4 4.4 0 0 1 8.6 3.7z"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.4"
+    />
+    <circle cx="7.4" cy="8.4" r="1.35" />
+    <path d="M12.75 3H15.4A5.1 5.1 0 0 1 20.5 8.1V15.9A5.1 5.1 0 0 1 15.4 21H12.75z" />
+    <circle cx="16.6" cy="13.4" r="1.5" fill="var(--bg-raised, #161b22)" />
   </svg>
 
   <!-- Steam Deck: a half ring around a dot -->

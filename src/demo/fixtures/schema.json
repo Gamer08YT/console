@@ -12,7 +12,8 @@
         "h264"
       ],
       "default": 0,
-      "requires": "h264"
+      "requires": "h264",
+      "profile": true
     },
     {
       "key": "jpg_quality",
@@ -24,7 +25,8 @@
       "min": 1,
       "max": 100,
       "default": 70,
-      "requires": "mjpeg"
+      "requires": "mjpeg",
+      "profile": true
     },
     {
       "key": "h264_kbps",
@@ -36,7 +38,8 @@
       "min": 500,
       "max": 20000,
       "default": 4000,
-      "requires": "h264"
+      "requires": "h264",
+      "profile": true
     },
     {
       "key": "vid_fps_max",
@@ -48,7 +51,8 @@
       "min": 1,
       "max": 60,
       "default": 60,
-      "requires": "video"
+      "requires": "video",
+      "profile": true
     },
     {
       "key": "vid_adapt",
@@ -235,7 +239,8 @@
       ],
       "default": 5,
       "requires": "video",
-      "reboot": true
+      "reboot": true,
+      "profile": true
     },
     {
       "key": "scr_watch",
@@ -271,7 +276,8 @@
         "android"
       ],
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "mouse_mode",
@@ -285,7 +291,8 @@
         "relative"
       ],
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "ptr_engage",
@@ -299,7 +306,8 @@
         "hover"
       ],
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "ptr_desk_w",
@@ -311,7 +319,8 @@
       "min": 0,
       "max": 32767,
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "ptr_desk_h",
@@ -323,7 +332,8 @@
       "min": 0,
       "max": 32767,
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "ptr_scr_x",
@@ -335,7 +345,8 @@
       "min": 0,
       "max": 32767,
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "ptr_scr_y",
@@ -347,7 +358,8 @@
       "min": 0,
       "max": 32767,
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "mouse_sens",
@@ -359,7 +371,8 @@
       "min": 10,
       "max": 400,
       "default": 100,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "jiggle_s",
@@ -382,7 +395,8 @@
       "type": "bool",
       "default": 0,
       "requires": "hid",
-      "reboot": true
+      "reboot": true,
+      "profile": true
     },
     {
       "key": "usb_pad",
@@ -401,7 +415,8 @@
       ],
       "default": 0,
       "requires": "hid",
-      "reboot": true
+      "reboot": true,
+      "profile": true
     },
     {
       "key": "scroll_inv",
@@ -410,7 +425,8 @@
       "title": "Invert scroll wheel",
       "type": "bool",
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "kbd_layout",
@@ -427,7 +443,8 @@
         "lt_lt"
       ],
       "default": 0,
-      "requires": "hid"
+      "requires": "hid",
+      "profile": true
     },
     {
       "key": "type_delay",
@@ -1594,7 +1611,8 @@
       "title": "Hide the bars in full screen",
       "help": "In full screen the status strip, the rail and the bottom bar slide away and the picture takes the whole screen. They come back over it with the mouse at an edge (after a moment while you have control), the small tab at the top, or a tap of the right Ctrl key on its own, and go again a few seconds after you leave them.",
       "type": "bool",
-      "default": 1
+      "default": 1,
+      "profile": true
     },
     {
       "key": "ui_touch_kbd",
@@ -1607,7 +1625,8 @@
         "console",
         "phone"
       ],
-      "default": 0
+      "default": 0,
+      "profile": true
     },
     {
       "key": "ui_hidden",
@@ -1617,7 +1636,8 @@
       "help": "Untick a control to take its button out of the console, for everyone who signs in. It only hides the button: the feature itself stays as its own settings have it. Stored as the ids of the hidden controls; the console keeps the list of what can be hidden.",
       "type": "string",
       "maxLength": 255,
-      "default": ""
+      "default": "",
+      "profile": true
     },
     {
       "key": "ui_haptic_keys",

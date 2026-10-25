@@ -21,8 +21,20 @@ test("a Steam Deck in its dock names itself over CEC", () => {
   assert.deepEqual(targetKind(linuxLike, { ...deck, name: "" }), { kind: "steamdeck", from: "cec" });
 });
 
+test("a Mi TV Stick is Android by its CEC name", () => {
+  const stick = { la: 4, name: "Mi TV Stick", type: "playback", vendor: "00ec0a", power: "on", seenMs: 0 };
+  assert.deepEqual(targetKind(null, stick), { kind: "android", from: "cec" });
+  assert.deepEqual(targetKind(linuxLike, { ...stick, name: "Mi Soundbar" }), { kind: "linux", from: "usb" });
+});
+
 test("anything else keeps the USB guess", () => {
   assert.deepEqual(targetKind(linuxLike, tv), { kind: "linux", from: "usb" });
   assert.deepEqual(targetKind(linuxLike, null), { kind: "linux", from: "usb" });
   assert.deepEqual(targetKind(null, null), { kind: "unknown", from: "usb" });
+});
+
+test("a source known only over CEC is shown by its CEC name", () => {
+  assert.deepEqual(targetKind(null, tv), { kind: "unknown", from: "cec" });
+  assert.deepEqual(targetKind({ os: "unknown", trace: "" }, tv), { kind: "unknown", from: "cec" });
+  assert.deepEqual(targetKind(null, { ...tv, name: "" }), { kind: "unknown", from: "usb" });
 });

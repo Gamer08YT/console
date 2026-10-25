@@ -1919,3 +1919,11 @@
     border-bottom: 1px solid var(--border);
   }
 }
+
+/* A value the active device profile holds of its own. */
+.badge-profile {
+  border-color: var(--accent);
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}

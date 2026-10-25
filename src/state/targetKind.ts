@@ -2,6 +2,7 @@
  * What the target is, for the OS button on the rail. The USB fingerprint tells
  * computers apart, but a Nintendo Switch or a Steam Deck enumerates much like
  * Linux. Over HDMI-CEC both name themselves, so that wins over the USB guess.
+ * A TV stick has no USB to us at all, only its CEC name.
  */
 import type { CecDevice, UsbProbe } from "./device";
 
@@ -21,6 +22,13 @@ export function targetKind(probe: UsbProbe | null, cec: CecDevice | null): Targe
   }
   if (cec && (vendor === STEAM_DECK || /^steam ?deck/i.test(cec.name))) {
     return { kind: "steamdeck", from: "cec" };
+  }
+  if (cec && /^mi tv stick/i.test(cec.name)) {
+    return { kind: "android", from: "cec" };
+  }
+  /* Nothing from USB, but a source that names itself: shown under its name. */
+  if (cec?.name && (!probe || probe.os === "unknown")) {
+    return { kind: "unknown", from: "cec" };
   }
   return { kind: probe?.os ?? "unknown", from: "usb" };
 }
