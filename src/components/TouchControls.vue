@@ -27,8 +27,10 @@ const props = defineProps<{
      ui_touch_kbd), which the page shows and reports as open. */
   consoleKeyboard: boolean;
   consoleKeyboardOpen: boolean;
+  /* A bar across the bottom instead of floating over the picture. */
+  docked: boolean;
 }>();
-const emit = defineEmits<{ stick: [on: boolean]; keyboard: [] }>();
+const emit = defineEmits<{ stick: [on: boolean]; keyboard: []; dock: [on: boolean] }>();
 
 /* Key positions that are not characters. */
 const ENTER = 0x28;
@@ -152,7 +154,7 @@ function toggleKeyboard() {
 </script>
 
 <template>
-  <div class="touch-controls" role="toolbar" aria-label="Touch controls">
+  <div :class="['touch-controls', { 'touch-docked': docked }]" role="toolbar" aria-label="Touch controls">
     <!-- The pad sits above the row so a thumb on it is nowhere near the
          buttons that open and close it. -->
     <div v-if="padOpen" class="touch-pad" role="group" aria-label="Keys">
@@ -210,6 +212,15 @@ function toggleKeyboard() {
       >
         <Icon name="keyboard" :size="22" />
       </button>
+      <button
+        type="button"
+        class="touch-btn touch-btn-dock"
+        :aria-label="docked ? 'Let it float over the picture' : 'Dock it under the picture'"
+        :title="docked ? 'Let it float over the picture' : 'Dock it under the picture'"
+        @click="emit('dock', !docked)"
+      >
+        <Icon :name="docked ? 'float' : 'dock'" :size="18" />
+      </button>
     </div>
 
     <input
@@ -252,6 +263,36 @@ function toggleKeyboard() {
 .touch-row {
   display: flex;
   gap: 8px;
+}
+
+/* Docked: a bar under the picture, across the whole width, so it never covers
+   the screen. The pad opens above the row, as wide as the bar. */
+.touch-docked {
+  position: static;
+  transform: none;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px max(8px, env(safe-area-inset-right, 0px)) 6px max(8px, env(safe-area-inset-left, 0px));
+  border-radius: 0;
+  border-width: 1px 0 0;
+  background: var(--bg-raised);
+  box-shadow: none;
+  flex: none;
+}
+
+.touch-docked .touch-row > .touch-btn {
+  flex: 1;
+  min-width: 0;
+}
+
+.touch-docked .touch-row > .touch-btn-dock {
+  flex: 0 0 44px;
+}
+
+.touch-btn-dock {
+  min-width: 40px;
+  padding: 0 8px;
+  color: var(--text-muted);
 }
 
 /* Arrows in the shape they have on a keyboard, with the three keys a phone

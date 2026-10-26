@@ -26,6 +26,8 @@ import { toast } from "../state/toasts";
 import { copyToClipboard } from "../ui/clipboard";
 import { inputRtt } from "../input/control";
 import { browserLag, transport } from "../video/stream";
+import { videoHistory } from "../state/videoHistory";
+import Sparkline from "./Sparkline.vue";
 
 const props = defineProps<{
   status: VideoStatus | null;
@@ -245,6 +247,23 @@ function rate(kbps: number): string {
           </span>
         </label>
 
+        <div v-if="videoHistory.length > 1" class="vw-graphs">
+          <Sparkline
+            :samples="videoHistory"
+            label="Frames"
+            :value="(x) => x.fps"
+            :format="(v) => `${v.toFixed(1)} fps`"
+            :floor="10"
+          />
+          <Sparkline
+            :samples="videoHistory"
+            label="Bitrate"
+            :value="(x) => x.kbps"
+            :format="(v) => rate(Math.round(v))"
+            :floor="1000"
+          />
+        </div>
+
         <dl v-if="status" ref="facts" class="facts">
           <div class="fact">
             <dt>Signal</dt>
@@ -367,6 +386,13 @@ function rate(kbps: number): string {
 <style scoped>
 .vw {
   position: relative;
+}
+
+.vw-graphs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .vw-lat {

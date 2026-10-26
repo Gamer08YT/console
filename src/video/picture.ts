@@ -50,15 +50,24 @@ export function intrinsicSize(el: unknown): Intrinsic | null {
 
 /**
  * Fit @p of into @p box the way the CSS does: `object-fit: contain` when the
- * picture may grow, `scale-down` when it may not.
+ * picture may grow, `scale-down` when it may not. @p alignY is where the spare
+ * height goes, as `object-position` puts it: 0 top, 0.5 centre, 1 bottom.
  */
-export function letterbox(box: Box, of: Intrinsic, grow: boolean): Letterbox {
+export function letterbox(box: Box, of: Intrinsic, grow: boolean, alignY = 0.5): Letterbox {
   const scale = grow
     ? Math.min(box.width / of.w, box.height / of.h)
     : Math.min(1, box.width / of.w, box.height / of.h);
   const width = of.w * scale;
   const height = of.h * scale;
-  return { width, height, padX: (box.width - width) / 2, padY: (box.height - height) / 2 };
+  return { width, height, padX: (box.width - width) / 2, padY: (box.height - height) * alignY };
+}
+
+/** The vertical part of an `object-position` as computed ("50% 0%"), 0..1. */
+export function objectAlignY(position: string | undefined): number {
+  const y = position?.trim().split(/\s+/)[1];
+  if (!y?.endsWith("%")) return 0.5;
+  const v = Number.parseFloat(y) / 100;
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5;
 }
 
 export type FitMode = "fit" | "stretch" | "actual";
@@ -72,5 +81,8 @@ export function pictureRect(
   if (rect.width <= 0 || rect.height <= 0) return null;
   const size = intrinsicSize(el) ?? { w: rect.width, h: rect.height };
   if (size.w <= 0 || size.h <= 0) return null;
-  return { rect, ...letterbox(rect, size, fit === "stretch") };
+  /* On a phone held upright the picture sits at the top (layout.css): read
+     where the CSS put it rather than assume the centre. */
+  const alignY = objectAlignY(getComputedStyle(el).objectPosition);
+  return { rect, ...letterbox(rect, size, fit === "stretch", alignY) };
 }

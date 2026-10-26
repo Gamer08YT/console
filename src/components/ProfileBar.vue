@@ -146,7 +146,7 @@ const OS_CHOICES = [
         </button>
       </span>
     </div>
-    <p class="setting-note">
+    <p class="setting-note profile-note">
       <template v-if="custom">
         Settings marked with the profile's name are its own. The rest come from Default.
       </template>
@@ -225,10 +225,25 @@ const OS_CHOICES = [
   gap: var(--space-2);
 }
 
+/* One line with the name, the picker and its buttons, even on a phone. */
+.profile-row > select {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 0;
+}
+
 .profile-actions {
   display: inline-flex;
   gap: var(--space-1);
   margin-left: auto;
+}
+
+/* Two lines of a phone's first screen for what the marks beside the
+   settings already show. */
+@media (max-width: 720px) {
+  .profile-note {
+    display: none;
+  }
 }
 
 .profile-form {

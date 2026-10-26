@@ -264,7 +264,9 @@
   display: none;
 }
 
-@media (max-width: 640px) {
+/* A narrow screen, or a phone on its side: little height to spare, so the
+   bar keeps to one row and the rest goes behind "More". */
+@media (max-width: 640px), (max-height: 500px) {
   .actionbar {
     position: relative;
   }
@@ -300,12 +302,33 @@
   .ab-more.ab-more-open {
     display: flex;
   }
+
+  /* Open, it is a list: an icon alone says little on a phone, where nothing
+     shows a tooltip. The words come from data-label. */
+  .ab-more.ab-more-open {
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 200px;
+  }
+
+  .ab-more-open > .btn {
+    justify-content: flex-start;
+    width: auto;
+    min-height: 38px;
+    padding: 0 var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .ab-more-open > .btn[data-label]::after {
+    content: attr(data-label);
+  }
 }
 
 /* The keyboard-LED indicators are the least essential thing in the bar; drop
-   them first on a narrow screen so the controls fit on one row. */
-@media (max-width: 640px) {
-  .leds {
+   them first on a narrow screen so the controls fit on one row. span.leds:
+   components.css comes later and sets .leds itself. */
+@media (max-width: 640px), (max-height: 500px) {
+  span.leds {
     display: none;
   }
 }
@@ -346,6 +369,22 @@
 .screen-actual {
   max-width: none;
   max-height: none;
+}
+
+/* A phone held upright: the picture is wider than tall, so it would sit in the
+   middle of a tall stage with black above and below. At the top, the free
+   space is all in one piece under it, for the thumb (touch mode works there
+   too). Centred again while zoomed, where the pan is worked out from the
+   middle. pictureRect() reads this, so the pointer follows. */
+@media (max-width: 640px) and (orientation: portrait) {
+  .screen:not(.screen-zoomed) {
+    align-items: flex-start;
+  }
+
+  .screen:not(.screen-zoomed) .screen-fit,
+  .screen:not(.screen-zoomed) .screen-stretch {
+    object-position: 50% 0%;
+  }
 }
 
 .screen-engaged {

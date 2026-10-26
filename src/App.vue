@@ -11,6 +11,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } f
 
 import Icon from "./components/Icon.vue";
 import AutomationPanel from "./components/AutomationPanel.vue";
+import RegionOverlay from "./components/RegionOverlay.vue";
+import WelcomeProfiles from "./components/WelcomeProfiles.vue";
 import CaptureList from "./components/CaptureList.vue";
 import InputPanel from "./components/InputPanel.vue";
 import LoginView from "./components/LoginView.vue";
@@ -80,7 +82,15 @@ import {
 } from "./state/device";
 import { loadSession, logout, type SessionState } from "./state/auth";
 import { toast } from "./state/toasts";
-import { loadProfiles, ownValue, profiles } from "./state/profiles";
+import { createProfile, dismissAsk, loadProfiles, ownValue, profiles } from "./state/profiles";
+import { recordVideo } from "./state/videoHistory";
+import {
+  draft as areaDraft,
+  drawing as areaDrawing,
+  newRegion,
+  outlines as areaOutlines,
+  type RegionRect,
+} from "./state/regions";
 import { copyToClipboard } from "./ui/clipboard";
 
 type PanelId = "input" | "media" | "automation" | "captures" | null;
@@ -148,6 +158,21 @@ async function signOutFromRail() {
 }
 
 const panel = ref<PanelId>(null);
+
+/* Drawing a screen area: the panel steps aside so the whole picture can be
+   dragged over, and comes back with the rectangle in its form. */
+watch(areaDrawing, (on) => {
+  if (on) panel.value = null;
+});
+function onAreaDrawn(rect: RegionRect) {
+  if (areaDraft.value) Object.assign(areaDraft.value, rect);
+  else areaDraft.value = newRegion(rect, areaOutlines.value.length + 1);
+  onAreaDone();
+}
+function onAreaDone() {
+  areaDrawing.value = false;
+  panel.value = "automation";
+}
 /* Why there is no video at all, in the device's own words - a capture board
    that never answered, or a pipeline that could not start. Different from "no
    signal", which means the board is there and the target is quiet. */
@@ -586,6 +611,60 @@ const cecSource = computed(() => {
   return st.devices.find((d) => d.la === st.target) ?? st.devices[0] ?? null;
 });
 
+/*
+ * Profiles the console offers. On a new device it asks once what the device
+ * will be plugged into; later, a device that names itself and has a preset but
+ * no profile gets a line offering one. Both answers are kept on the device.
+ */
+const welcomeClosed = ref(false);
+const showWelcome = computed(() => !!profiles.value?.welcome && !welcomeClosed.value);
+const suggestLater = ref("");
+const suggested = computed(() => {
+  const id = profiles.value?.suggest;
+  if (!id || id === suggestLater.value || showWelcome.value) return null;
+  return profiles.value?.presets.find((p) => p.id === id) ?? null;
+});
+const suggestBusy = ref(false);
+/* The device settles on what is attached a moment after it shows up. */
+let suggestTimer = 0;
+watch(
+  () => `${cecSource.value?.name ?? ""}|${cecSource.value?.vendor ?? ""}|${usbProbe.value?.os ?? ""}`,
+  () => {
+    clearTimeout(suggestTimer);
+    suggestTimer = window.setTimeout(() => loadProfiles().catch(() => {}), 4000);
+  },
+);
+onUnmounted(() => clearTimeout(suggestTimer));
+async function makeSuggested() {
+  const p = suggested.value;
+  if (!p) return;
+  suggestBusy.value = true;
+  try {
+    const list = await createProfile(p.id);
+    values.value = await loadValues();
+    if (
+      list.reboot &&
+      confirm("Some settings of this profile apply after a restart (the gamepad, the EDID). Restart now?") &&
+      (await runRestart("Restarting the device", restartDevice, { kind: "manual" }))
+    ) {
+      location.reload();
+    }
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    suggestBusy.value = false;
+  }
+}
+async function declineSuggested() {
+  const p = suggested.value;
+  if (!p) return;
+  try {
+    await dismissAsk({ preset: p.id });
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  }
+}
+
 /* The HDMI-CEC remote floats like the keyboard and opens from beside it. */
 const remoteOpen = ref(localStorage.getItem("espkvm.rc") === "1");
 watch(remoteOpen, (open) => {
@@ -691,10 +770,24 @@ watchEffect(() => {
 const stickSpeed = computed(() => Number(values.value.mouse_sens ?? 100) / 100);
 const stickOn = ref(localStorage.getItem("espkvm.stick") === "1");
 const padMouseOn = ref(localStorage.getItem("espkvm.padmouse") === "1");
-watch([stickOn, padMouseOn], ([stick, pad]) => {
+/* The touch remote floats over the picture, or sits as a bar under it. */
+const showRemote = computed(
+  () => touchMode.value && (!paused.value || textView.value) && !heldByOther.value,
+);
+const remoteProps = computed(() => ({
+  control: input.control,
+  layout: layout.value,
+  stick: stickOn.value,
+  consoleKeyboard: values.value.ui_touch_kbd !== 1,
+  consoleKeyboardOpen: oskOpen.value,
+  docked: remoteDocked.value,
+}));
+const remoteDocked = ref(localStorage.getItem("espkvm.touch.docked") === "1");
+watch([stickOn, padMouseOn, remoteDocked], ([stick, pad, docked]) => {
   try {
     localStorage.setItem("espkvm.stick", stick ? "1" : "0");
     localStorage.setItem("espkvm.padmouse", pad ? "1" : "0");
+    localStorage.setItem("espkvm.touch.docked", docked ? "1" : "0");
   } catch {
     /* a private window; it just will not be remembered */
   }
@@ -1601,6 +1694,7 @@ async function startConsole() {
       }
       interval = 1000;
       status.value = s;
+      recordVideo(s);
       followProfile(s.profile);
     } catch (err) {
       if (err instanceof Unauthorized) {
@@ -1614,6 +1708,7 @@ async function startConsole() {
         return;
       }
       status.value = null;
+      recordVideo(null);
       interval = Math.min(interval * 2, 15000);
       /* Say it once. A console that silently freezes on the last frame is how
          an operator ends up typing into a machine that is not listening. */
@@ -1655,6 +1750,8 @@ async function startConsole() {
 
   usbProbe.value = await loadUsbProbe().catch(() => null);
   storage.value = await loadImages().catch(() => null);
+  /* The first-run question and an offer for what is attached come with it. */
+  loadProfiles().catch(() => {});
 
   window.addEventListener("keydown", onGlobalKey);
   document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -2002,6 +2099,21 @@ const LED_BITS: Array<[number, string]> = [
       <span>{{ restartOutcome.text }}</span>
       <button type="button" class="btn btn-sm" @click="restartOutcome = null">Dismiss</button>
     </div>
+    <div v-if="suggested" class="update-banner" role="status">
+      <span>
+        This is a {{ suggested.name }}. Make a profile for it? Settings that suit it, used whenever
+        it is attached.
+      </span>
+      <button type="button" class="btn btn-sm btn-primary" :disabled="suggestBusy" @click="makeSuggested">
+        Make a profile
+      </button>
+      <button type="button" class="btn btn-sm" :disabled="suggestBusy" @click="suggestLater = suggested.id">
+        Not now
+      </button>
+      <button type="button" class="btn btn-sm" :disabled="suggestBusy" @click="declineSuggested">
+        Never for it
+      </button>
+    </div>
     <div v-if="showPadAlone" class="update-banner" role="status">
       <span>
         Keyboard and mouse are off: the target sees {{ padAloneLabel }} only (Settings - Input -
@@ -2314,16 +2426,27 @@ const LED_BITS: Array<[number, string]> = [
           </button>
 
           <TouchControls
-            v-if="touchMode && (!paused || textView) && !heldByOther"
-            :control="input.control"
-            :layout="layout"
-            :stick="stickOn"
-            :console-keyboard="values.ui_touch_kbd !== 1"
-            :console-keyboard-open="oskOpen"
+            v-if="showRemote && !remoteDocked"
+            v-bind="remoteProps"
             @stick="stickOn = $event"
             @keyboard="oskOpen = !oskOpen"
+            @dock="remoteDocked = $event"
           />
           <PointerStick v-if="stickAt" :at="stickAt" />
+          <WelcomeProfiles
+            v-if="showWelcome && !areaDrawing"
+            :values="values"
+            @values="values = $event"
+            @done="welcomeClosed = true"
+          />
+          <RegionOverlay
+            v-if="areaDrawing"
+            :surface="surface"
+            :fit="fit"
+            :others="areaOutlines"
+            @done="onAreaDrawn"
+            @cancel="onAreaDone"
+          />
         </div>
 
 
@@ -2384,6 +2507,13 @@ const LED_BITS: Array<[number, string]> = [
     <!-- Never the main way in: the real keyboard is, once the picture is
          engaged. This opens on request, under the picture and across the whole
          width, or floating if that suits better. -->
+    <TouchControls
+      v-if="showRemote && remoteDocked"
+      v-bind="remoteProps"
+      @stick="stickOn = $event"
+      @keyboard="oskOpen = !oskOpen"
+      @dock="remoteDocked = $event"
+    />
     <KeyboardPanel
       v-if="oskOpen"
       :control="input.control"
@@ -2683,6 +2813,7 @@ const LED_BITS: Array<[number, string]> = [
           class="btn btn-sm btn-icon"
           :class="{ 'btn-on': netlogOpen }"
           data-ui="netlog"
+          data-label="Target log"
           aria-label="Target log (netconsole)"
           :title="netlogOpen ? 'Hide the target log' : 'The target\'s log, received over the network (netconsole)'"
           @click="netlogOpen = !netlogOpen"
@@ -2695,6 +2826,7 @@ const LED_BITS: Array<[number, string]> = [
           type="button"
           class="btn btn-sm btn-icon"
           data-ui="screenshot"
+          data-label="Screenshot"
           aria-label="Save a screenshot to the microSD card"
           :title="status.screenshotBlocked ?? 'Save a screenshot to the microSD card (SCREENSHOTS)'"
           :disabled="!!status.screenshotBlocked || shotBusy"
@@ -2721,6 +2853,7 @@ const LED_BITS: Array<[number, string]> = [
           type="button"
           :class="['btn', 'btn-sm', 'rec-btn', { 'rec-on': record.on }]"
           data-ui="record"
+          :data-label="record.on ? 'Stop recording' : 'Record'"
           :aria-label="record.on ? 'Stop recording' : 'Record to the microSD card'"
           :title="
             record.on
@@ -2744,6 +2877,7 @@ const LED_BITS: Array<[number, string]> = [
               : 'The target is not showing a text screen'
           "
           data-ui="select"
+          data-label="Select text"
           aria-label="Select text on the screen"
           :aria-pressed="selectingText"
           @click="toggleSelectText()"
@@ -2760,6 +2894,7 @@ const LED_BITS: Array<[number, string]> = [
               : 'The target is not showing a text screen'
           "
           data-ui="copy"
+          data-label="Copy as text"
           aria-label="Copy the screen as text"
           @click="copyScreenText()"
         >
@@ -2769,6 +2904,7 @@ const LED_BITS: Array<[number, string]> = [
           type="button"
           class="btn btn-sm btn-icon"
           data-ui="scale"
+          :data-label="`Scale: ${fit === 'fit' ? 'fit' : fit === 'stretch' ? 'stretch' : '1:1'}`"
           :aria-label="`Scale: ${fit === 'fit' ? 'fit' : fit === 'stretch' ? 'stretch' : '1:1'}`"
           :title="
             fit === 'fit'

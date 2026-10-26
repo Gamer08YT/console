@@ -737,16 +737,10 @@ function startDemoScreen() {
      whole box drifts the pointer on whichever axis is padded. The same sum the
      real input path does in mapToTarget(). */
   const toCanvas = (e: { clientX: number; clientY: number }) => {
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) return null;
-    const scale =
-      props.fit === "stretch"
-        ? Math.min(r.width / W, r.height / H)
-        : Math.min(1, r.width / W, r.height / H);
-    const shownW = W * scale;
-    const shownH = H * scale;
-    const x = ((e.clientX - r.left - (r.width - shownW) / 2) / shownW) * W;
-    const y = ((e.clientY - r.top - (r.height - shownH) / 2) / shownH) * H;
+    const p = pictureRect(el, props.fit);
+    if (!p) return null;
+    const x = ((e.clientX - p.rect.left - p.padX) / p.width) * W;
+    const y = ((e.clientY - p.rect.top - p.padY) / p.height) * H;
     if (x < 0 || y < 0 || x > W || y > H) return null;
     return { x, y };
   };

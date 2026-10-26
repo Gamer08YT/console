@@ -6,7 +6,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { intrinsicSize, letterbox } from "../src/video/picture.ts";
+import { intrinsicSize, letterbox, objectAlignY } from "../src/video/picture.ts";
 
 /* What an <img> showing a 1080p stream looks like in a window that is not 16:9:
    the element fills the stage, and `width`/`height` are the RENDERED size. */
@@ -82,4 +82,19 @@ test("#32: a 1080p stream in a 1800x1500 window is not mapped against the box", 
 
   /* And a click in the bar itself is off the picture, so it is no click. */
   assert.ok((100 - p.padY) / p.height < 0);
+});
+
+test("a picture at the top of a tall box has all the spare height under it", () => {
+  const p = letterbox({ width: 390, height: 700 }, { w: 1280, h: 720 }, true, 0);
+  assert.equal(p.padY, 0);
+  assert.equal(Math.round(p.height), 219);
+});
+
+test("object-position as computed gives the vertical alignment", () => {
+  assert.equal(objectAlignY("50% 0%"), 0);
+  assert.equal(objectAlignY("50% 50%"), 0.5);
+  assert.equal(objectAlignY("50% 100%"), 1);
+  assert.equal(objectAlignY("50% 12px"), 0.5);
+  assert.equal(objectAlignY(""), 0.5);
+  assert.equal(objectAlignY(undefined), 0.5);
 });

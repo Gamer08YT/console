@@ -71,25 +71,29 @@ const PRESETS = [
     id: "steamdeck",
     name: "Steam Deck",
     match: { cecName: "Steam Deck", cecVendor: "e0319e", usbOs: "" },
-    set: { target_os: 3, mouse_mode: 1, ptr_desk_w: 0, ptr_desk_h: 0 },
+    set: { target_os: 3, mouse_mode: 1, ptr_desk_w: 0, ptr_desk_h: 0, ui_hidden: "netlog,serial" },
   },
   {
     id: "switch",
     name: "Nintendo Switch",
     match: { cecName: "Nintendo", cecVendor: "0009bf", usbOs: "" },
-    set: { usb_pad: 2 },
+    set: { usb_pad: 2, ui_hidden: "copy,keyboard,keylock,netlog,padmouse,select,serial" },
   },
   {
     id: "androidtv",
     name: "Android TV",
     match: { cecName: "", cecVendor: "", usbOs: "android" },
-    set: { target_os: 4, mouse_mode: 1 },
+    set: { target_os: 4, mouse_mode: 1, ui_hidden: "copy,netlog,select,serial" },
   },
   {
     id: "mitvstick",
     name: "Mi TV Stick",
     match: { cecName: "Mi TV Stick", cecVendor: "", usbOs: "" },
-    set: { target_os: 4, mouse_mode: 1 },
+    set: {
+      target_os: 4,
+      mouse_mode: 1,
+      ui_hidden: "copy,gamepad,keyboard,keylock,netlog,padmouse,select,serial,touch",
+    },
   },
 ];
 let profileActive = 0;
@@ -105,16 +109,89 @@ function effectiveSettings(): Json {
   return { ...settings, ...(activeDemoProfile()?.set ?? {}) };
 }
 
+/* The first-run question: asked once per browser here, as the device asks
+   once after its first password. */
+const WELCOME_KEY = "espkvm.demo.welcome";
+let profileWelcome = (() => {
+  try {
+    return localStorage.getItem(WELCOME_KEY) !== "done";
+  } catch {
+    return true;
+  }
+})();
+const declinedPresets = new Set<string>();
+
+/* The same rule as suggestion() in kvm_profiles.c: a device that names itself
+   over CEC, no profile that fits it, a preset that does. */
+function demoSuggest(): string | undefined {
+  const name = cecBox.name.toLowerCase();
+  const fits = (m: { cecName: string; cecVendor: string }) =>
+    (m.cecName !== "" && name.startsWith(m.cecName.toLowerCase())) || (m.cecVendor !== "" && m.cecVendor === cecBox.vendor);
+  if (profileManual && profileActive !== 0) return undefined;
+  if (profileList.some((p) => p.match && fits(p.match))) return undefined;
+  return PRESETS.find((p) => !declinedPresets.has(p.id) && fits(p.match))?.id;
+}
+
 function profilesJson(): Json {
   return {
+    welcome: profileWelcome,
+    suggest: demoSuggest(),
     active: profileActive,
     manual: profileManual,
     max: 8,
     profiles: profileList,
     presets: PRESETS,
-    seen: { cecName: "", cecVendor: "", usbOs: "linux" },
+    seen: { cecName: cecBox.name, cecVendor: cecBox.vendor, usbOs: "linux" },
     reboot: false,
   };
+}
+
+/* Screen areas, as kvm_regions keeps them; what each "sees" is made up. */
+let demoRegions: Json[] = [];
+function regionsJson(): Json {
+  const t = performance.now() / 1000;
+  return {
+    max: 8,
+    regions: demoRegions.map((r, i) => {
+      const diff = Math.max(0, Math.round(4 + 4 * Math.sin(t / 3 + i)));
+      const active = r.mode === "still" ? Math.sin(t / 7 + i) > 0.3 : diff >= Number(r.threshold ?? 5);
+      return {
+        ...r,
+        live: {
+          seen: true,
+          active,
+          diff,
+          events: Math.floor(t / 9 + i),
+          colour: "grey",
+          colourPct: 70,
+          rgb: "#5a6270",
+          ...(r.mode === "still" ? { stillMs: Math.round(((t + i * 5) % 40) * 1000) } : {}),
+        },
+      };
+    }),
+  };
+}
+async function demoRegionsPost(path: string, body: Json): Promise<Response> {
+  if (path === "/api/v1/regions/remember") {
+    const r = demoRegions.find((x) => x.id === body.id);
+    if (!r) return json({ error: "no such area" }, 404);
+    r.hasRef = true;
+    return json(regionsJson());
+  }
+  const list = (body.regions as Json[] | undefined) ?? [];
+  if (list.length > 8) return json({ error: "eight areas at most" }, 400);
+  const used = new Set(list.map((r) => Number(r.id)).filter((n) => n >= 1 && n <= 8));
+  let next = 1;
+  demoRegions = list.map((r) => {
+    let id = Number(r.id);
+    if (!(id >= 1 && id <= 8)) {
+      while (used.has(next)) next++;
+      id = next;
+      used.add(id);
+    }
+    return { ...r, id, hasRef: Boolean(r.hasRef) };
+  });
+  return json(regionsJson());
 }
 
 async function demoProfiles(path: string, body: Json): Promise<Response> {
@@ -162,6 +239,20 @@ async function demoProfiles(path: string, body: Json): Promise<Response> {
       if (profileActive === id) {
         profileActive = 0;
         profileManual = false;
+      }
+      return json(profilesJson());
+    case "/api/v1/profiles/dismiss":
+      if (body.welcome === true) {
+        profileWelcome = false;
+        try {
+          localStorage.setItem(WELCOME_KEY, "done");
+        } catch {
+          /* asked again next time */
+        }
+      }
+      if (typeof body.preset === "string") {
+        if (!PRESETS.some((p) => p.id === body.preset)) return json({ error: "no such preset" }, 400);
+        declinedPresets.add(body.preset);
       }
       return json(profilesJson());
     case "/api/v1/profiles/select":
@@ -524,6 +615,8 @@ async function route(
       case "/api/v1/settings":
         syncMedia();
         return json(search.includes("profile=default") ? settings : effectiveSettings());
+      case "/api/v1/regions":
+        return json(regionsJson());
       case "/api/v1/profiles":
         return json(profilesJson());
       case "/api/v1/settings/schema":
@@ -642,6 +735,9 @@ async function route(
     return null;
   }
 
+  if (method === "POST" && path.startsWith("/api/v1/regions")) {
+    return demoRegionsPost(path, (await bodyJson(init, req)) as Json);
+  }
   if (method === "POST" && path.startsWith("/api/v1/profiles")) {
     return demoProfiles(path, (await bodyJson(init, req)) as Json);
   }

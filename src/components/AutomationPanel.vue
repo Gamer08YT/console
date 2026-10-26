@@ -42,6 +42,7 @@ import {
   type Values,
 } from "../state/device";
 import { toast } from "../state/toasts";
+import RegionsSection from "./RegionsSection.vue";
 
 const props = defineProps<{
   values: Values;
@@ -446,7 +447,8 @@ async function sendTest() {
         One command per line. <code>key ctrl+alt+f2</code> presses a chord,
         <code>type root</code> types text (US layout), <code>delay 500</code> pauses in
         milliseconds. <code>wait Press F2</code> holds until a row of the screen contains the
-        phrase, <code>gone Loading</code> until none does, and <code>timeout 120</code> sets how
+        phrase, <code>gone Loading</code> until none does, <code>wait area Name</code> until a
+        screen area fires (<code>gone area Name</code> until it is off), and <code>timeout 120</code> sets how
         many seconds the waits below it may take (60 if unsaid). A wait that runs out stops the
         runbook there. <code>record</code> starts recording the screen to the microSD card and
         goes on (<code>record 300</code> for five minutes), <code>timelapse 10</code> records one frame every
@@ -466,6 +468,10 @@ async function sendTest() {
       </div>
     </div>
     <button v-else type="button" class="btn btn-sm" @click="newRunbook">New runbook...</button>
+
+    <hr class="panel-rule" />
+
+    <RegionsSection />
 
     <hr class="panel-rule" />
 
@@ -554,7 +560,8 @@ async function sendTest() {
 
     <h3>Notifications</h3>
     <p class="setting-note">
-      Push a message when a watched phrase appears or the screen goes blank - to Telegram (with a
+      Push a message when a watched phrase appears, the screen goes blank or a screen area that
+      asks for it fires - to Telegram (with a
       screenshot on the MJPEG codec) or a webhook. Set the bot token, chat id or URL under
       Settings &rarr; Notifications.
       <a href="https://github.com/espkvm/espkvm/blob/main/docs/NOTIFICATIONS.md" target="_blank"

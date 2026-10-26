@@ -44,6 +44,10 @@ export interface ProfileList {
   seen?: ProfileMatch;
   /** Only on a change: a value that needs a restart moved. */
   reboot?: boolean;
+  /** A new device: ask once which devices it will see. Older firmware: absent. */
+  welcome?: boolean;
+  /** A preset id for the device attached now, which has no profile yet. */
+  suggest?: string;
 }
 
 const URL_BASE = "/api/v1/profiles";
@@ -104,6 +108,16 @@ export function deleteProfile(id: number): Promise<ProfileList> {
 
 export function selectProfile(id: number): Promise<ProfileList> {
   return call("/select", { id });
+}
+
+/** End the first-run question, or stop offering a preset. */
+export function dismissAsk(what: { welcome: true } | { preset: string }): Promise<ProfileList> {
+  return call("/dismiss", what);
+}
+
+/** The icon for a preset, as OsIcon draws it. */
+export function presetIcon(id: string): string {
+  return id === "androidtv" || id === "mitvstick" ? "android" : id;
 }
 
 export function activeProfile(list: ProfileList | null): Profile | undefined {

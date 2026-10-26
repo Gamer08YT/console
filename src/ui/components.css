@@ -1911,12 +1911,26 @@
     flex-direction: column;
   }
 
+  /* One row that scrolls sideways: wrapped, the sections took four rows of a
+     phone's screen before the first setting. */
   .settings-window .tabs {
     width: auto;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+
+  .settings-window .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-window .tab {
+    flex: none;
+    white-space: nowrap;
   }
 }
 
