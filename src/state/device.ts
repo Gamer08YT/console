@@ -228,6 +228,8 @@ export interface SystemInfo {
   installId?: string;
   /** The gamepad the USB device carries (Settings -> Input -> Gamepad, from boot): "" none. */
   usbPad?: "" | "switch" | "xinput" | "xbox";
+  /** espkvm-agent: the USB serial port is up in agent mode, and an agent said hello on it. */
+  agent?: { port: boolean; connected: boolean };
   /** A battery-backed clock chip answered on the I2C bus. */
   rtc?: boolean;
   /** Which one: "DS3231", "PCF8563", "PCF85063", "PCF8523". */
@@ -717,6 +719,59 @@ export interface CecStatus {
   devices: CecDevice[];
   log: CecLogEntry[];
 }
+
+/** espkvm-agent on the target, as the device sees it. */
+export interface AgentStatus {
+  mode: "off" | "console" | "agent";
+  port: boolean;
+  connected: boolean;
+  version?: string;
+  os?: "linux" | "windows" | "darwin" | string;
+  ops?: string[];
+}
+
+/** What the agent says about its machine. */
+export interface AgentMachine {
+  hostname: string;
+  os: string;
+  osName?: string;
+  arch: string;
+  uptimeS?: number;
+  user?: string;
+  ifaces: { name: string; mac?: string; ips: string[] }[];
+}
+
+/**
+ * An agent's refusal, with its code: not_allowed (switched off on the
+ * machine), no_desktop, locked, bad_params, failed.
+ */
+export class AgentError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+  }
+}
+
+async function agentFetch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api/v1/agent${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    cache: "no-store",
+    headers: body === undefined ? {} : { "Content-Type": "application/json", ...CONSOLE_HEADER },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) throw new Unauthorized();
+  const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  if (!res.ok) throw new AgentError(data.error ?? `the agent request failed (${res.status})`, data.code ?? "failed");
+  return data as T;
+}
+
+export const getAgent = () => agentFetch<AgentStatus>("");
+export const getAgentMachine = () => agentFetch<AgentMachine>("/info");
+export const getAgentClipboard = async () => (await agentFetch<{ text: string }>("/clipboard")).text;
+export const setAgentClipboard = async (text: string) => void (await agentFetch("/clipboard", { text }));
+export const agentPower = async (action: "shutdown" | "reboot") => void (await agentFetch("/power", { action }));
 
 export async function getCec(): Promise<CecStatus> {
   return getJson<CecStatus>("/api/v1/cec");

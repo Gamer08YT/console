@@ -31,6 +31,7 @@ import RemotePanel from "./components/RemotePanel.vue";
 import GamepadPanel from "./components/GamepadPanel.vue";
 import PointerStick from "./components/PointerStick.vue";
 import SerialPanel from "./components/SerialPanel.vue";
+import AgentPanel from "./components/AgentPanel.vue";
 import LogPanel from "./components/LogPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import { pictureOf } from "./ui/picture";
@@ -696,6 +697,16 @@ watch(serialOpen, (open) => {
   }
 });
 const serialReady = computed(() => Boolean(caps.value.serial?.available));
+/* espkvm-agent on the target, offered once the device has the agent port up. */
+const agentOpen = ref(localStorage.getItem("espkvm.agent") === "1");
+watch(agentOpen, (open) => {
+  try {
+    localStorage.setItem("espkvm.agent", open ? "1" : "0");
+  } catch {
+    /* a private window; it just will not be remembered */
+  }
+});
+const agentReady = computed(() => Boolean(system.value?.agent?.port));
 /* The device's own log, live; opened from the diagnostics popup. */
 const logOpen = ref(false);
 /* The target's log over the network (netconsole), once the receiver is on. */
@@ -2526,6 +2537,7 @@ const LED_BITS: Array<[number, string]> = [
       @close="remoteOpen = false"
     />
     <SerialPanel v-if="serialOpen && serialReady" @close="serialOpen = false" />
+    <AgentPanel v-if="agentOpen && agentReady" @close="agentOpen = false" />
     <LogPanel v-if="logOpen" @close="logOpen = false" />
     <LogPanel v-if="netlogOpen && netlogReady" source="netlog" @close="netlogOpen = false" />
     <GamepadPanel
@@ -2551,6 +2563,18 @@ const LED_BITS: Array<[number, string]> = [
             @click="serialOpen = !serialOpen"
           >
             <Icon name="terminal" :size="16" />
+          </button>
+          <!-- The agent rides the same USB cable; dim until it says hello. -->
+          <button
+            v-if="agentReady"
+            type="button"
+            :class="['conn', system?.agent?.connected ? 'conn-on' : 'conn-idle', { 'conn-open': agentOpen }]"
+            :title="agentOpen ? 'Hide the agent' : system?.agent?.connected ? 'The agent on the target' : 'No agent on the target yet'"
+            data-ui="agent"
+            aria-label="Agent"
+            @click="agentOpen = !agentOpen"
+          >
+            <Icon name="agent" :size="16" />
           </button>
           <button
             v-for="c in conns"

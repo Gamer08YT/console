@@ -19,6 +19,7 @@ export interface UiFeature {
 
 export const UI_FEATURES: UiFeature[] = [
   { id: "serial", label: "Serial console", group: "Connections" },
+  { id: "agent", label: "Agent", group: "Connections" },
   { id: "keyboard", label: "On-screen keyboard", group: "Input" },
   { id: "cec", label: "TV remote (HDMI-CEC)", group: "Input" },
   { id: "gamepad", label: "Gamepad", group: "Input" },

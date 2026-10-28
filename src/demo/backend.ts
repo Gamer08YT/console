@@ -382,6 +382,7 @@ function liveInfo(): Json {
       { label: "ota_1", version: otherVersion(), state: "valid", running: false, boot: false },
     ],
     atx: { enabled: true, known: true, on: m.powerOn },
+    agent: { port: true, connected: true },
     uptimeSeconds: Math.round(performance.now() / 1000) + 3600,
     tempC: Math.round(drift(41, 2.5, 26) * 10) / 10,
     heapFree: Math.round(drift(268000, 9000, 17)),
@@ -592,6 +593,8 @@ function fakeImage(): Response {
   });
 }
 
+let demoClipboard = "ssh anna@build-box";
+
 async function route(
   path: string,
   method: string,
@@ -651,6 +654,19 @@ async function route(
         return json(runbookStatus());
       case "/api/v1/cec":
         return json(cecStatus());
+      /* espkvm-agent on the made-up machine: a desktop agent, clipboard read
+         allowed, power not. */
+      case "/api/v1/agent":
+        return json({ mode: "agent", port: true, connected: true, version: "0.1.0", os: "linux",
+          ops: ["ping", "info", "clipboard.get", "clipboard.set", "power"] });
+      case "/api/v1/agent/info":
+        return json({
+          hostname: "build-box", os: "linux", osName: "Ubuntu 24.04.4 LTS", arch: "amd64",
+          uptimeS: Math.round(performance.now() / 1000) + 266420, user: "anna",
+          ifaces: [{ name: "eth0", mac: "f8:fe:5e:c3:71:ca", ips: ["192.168.1.20", "fd00::20"] }],
+        });
+      case "/api/v1/agent/clipboard":
+        return json({ text: demoClipboard });
       /* netconsole from the made-up Raspberry Pi: its boot, then a line now and
          again, one of them a kernel warning. */
       case "/api/v1/netlog/log": {
@@ -932,6 +948,13 @@ async function route(
       }
       case "/api/v1/cec/scan":
         return json({ ok: true });
+      case "/api/v1/agent/clipboard": {
+        const { text } = (await bodyJson(init, req)) as { text?: string };
+        demoClipboard = String(text ?? "");
+        return json({});
+      }
+      case "/api/v1/agent/power":
+        return json({ error: "switched off on this machine", code: "not_allowed" }, 403);
       case "/api/v1/cec/send":
         return json({ tx: "ok" });
       case "/api/v1/power/wake":

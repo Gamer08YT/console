@@ -192,6 +192,11 @@ const PATHS = {
   /* text selection: an I-beam; copy: two sheets */
   "text-select": ["M9 4h6M9 20h6M12 4v16", "M4 9v6M20 9v6"],
   copy: ["M9 9h11v11H9z", "M5 15H4V4h11v1"],
+  /* the target machine, where espkvm-agent runs */
+  agent: [
+    "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9",
+    "M2.7 18.6 4 16h16l1.3 2.6a1 1 0 0 1-.9 1.4H3.6a1 1 0 0 1-.9-1.4z",
+  ],
   /* the picture's scale: shrunk to fit, stretched to fill, one pixel to one */
   "fit-shrink": [
     "M15 15l6 6M15 15v4.8M15 15h4.8M9 15v4.8M9 15H4.2M9 15l-6 6",

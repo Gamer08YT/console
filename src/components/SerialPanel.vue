@@ -20,7 +20,7 @@ const INPUT = 0x02;
 const term = new Terminal(80, 25, 2000);
 const tick = ref(0); /* bumped to redraw: the terminal itself is not reactive */
 const state = ref<"connecting" | "open" | "closed">("connecting");
-const info = ref<{ running: boolean; baud: number; tx: number; rx: number } | null>(null);
+const info = ref<{ running: boolean; usb?: boolean; baud: number; tx: number; rx: number } | null>(null);
 const box = ref<HTMLElement | null>(null);
 let ws: WebSocket | null = null;
 let stopped = false;
@@ -165,7 +165,10 @@ const lines = computed(() => {
 
 const status = computed(() => {
   if (info.value && !info.value.running) return { cls: "pill-off", text: "port off" };
-  if (state.value === "open") return { cls: "pill-on", text: info.value ? `${info.value.baud} 8N1` : "open" };
+  if (state.value === "open") {
+    const text = !info.value ? "open" : info.value.usb ? "USB" : `${info.value.baud} 8N1`;
+    return { cls: "pill-on", text };
+  }
   return { cls: "pill-off", text: state.value === "connecting" ? "connecting" : "reconnecting" };
 });
 </script>
@@ -176,7 +179,7 @@ const status = computed(() => {
       <div class="ser-head">
         <h3>Serial console</h3>
         <span :class="['pill', status.cls]">{{ status.text }}</span>
-        <span v-if="info && info.running" class="ser-pins mono">TX {{ info.tx }} / RX {{ info.rx }}</span>
+        <span v-if="info && info.running && !info.usb" class="ser-pins mono">TX {{ info.tx }} / RX {{ info.rx }}</span>
         <span class="ser-gap" />
         <button type="button" class="btn btn-sm btn-quiet" title="Copy the screen and what scrolled off it" @click="copyAll">
           <Icon name="copy" :size="14" />
