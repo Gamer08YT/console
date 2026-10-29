@@ -537,9 +537,16 @@ async function commit(key: string, value: number | string) {
 }
 
 async function write(key: string, value: number | string | boolean) {
+  /* The EDID, the gamepad and USB legacy apply at boot and stand alone, so
+   * the restart can be offered at once. Others that need one come in groups
+   * (network, pins): asked after the first, the device would restart half set. */
+  const setting = props.schema.find((s) => s.key === key);
+  const offerRestart = Boolean(setting?.reboot && setting.profile) && props.values[key] !== value;
   busy.value = true;
+  let saved = false;
   try {
     emit("values", await saveSettings({ [key]: value }));
+    saved = true;
     /* A write under a profile of one's own may have given it a value. */
     if (profiles.value && profiles.value.active !== 0) {
       await loadProfiles();
@@ -548,6 +555,15 @@ async function write(key: string, value: number | string | boolean) {
     toast.error(err instanceof Error ? err.message : String(err));
   } finally {
     busy.value = false;
+  }
+  if (saved && offerRestart && confirm(`${setting?.title} applies after a restart. Restart now?`)) {
+    try {
+      if (await runRestart("Restarting the device", restartDevice, { kind: "manual" })) {
+        location.reload();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
   }
 }
 
