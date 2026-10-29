@@ -513,6 +513,12 @@ function rate(kbps: number): string {
   box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, 0.4));
 }
 
+/* Taller than the window, the popup scrolls. Shrunk instead, the codec row
+   (overflow hidden) folded to a line and its buttons vanished (#85). */
+.vw-popup > * {
+  flex-shrink: 0;
+}
+
 .vw-head {
   display: flex;
   align-items: center;
