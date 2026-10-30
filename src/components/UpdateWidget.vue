@@ -28,6 +28,7 @@ import {
   type PublishedRelease,
   type InstallStatus,
   switchBootSlot,
+  TRIAL_SECONDS,
   uploadFirmware,
   type FirmwareRelease,
   type OtaSlot,
@@ -62,6 +63,33 @@ const props = defineProps<{ system: SystemInfo | null; values: Values }>();
 const emit = defineEmits<{ (e: "hold-stream", hold: boolean): void }>();
 
 const open = ref(false);
+
+/*
+ * How an update proves itself (device.ts, TRIAL_SECONDS). "auto": on trial, and
+ * this console keeps it once it can reach it again. "ask": on trial, and the
+ * operator keeps it by hand. "off": it keeps itself as soon as it boots.
+ */
+type TrialMode = "auto" | "ask" | "off";
+const TRIAL_KEY = "espkvm.updateTrial";
+const trialMode = ref<TrialMode>("auto");
+try {
+  const saved = localStorage.getItem(TRIAL_KEY);
+  if (saved === "ask" || saved === "off") trialMode.value = saved;
+} catch {
+  /* no storage: the default */
+}
+watch(trialMode, (m) => {
+  try {
+    localStorage.setItem(TRIAL_KEY, m);
+  } catch {
+    /* fine: this visit only */
+  }
+});
+/* Firmware that knows nothing of trials ignores the parameter. */
+const trialSeconds = computed(() => (trialMode.value === "off" ? 0 : TRIAL_SECONDS));
+const trialNote = computed(() => (trialMode.value === "off" ? undefined : trialMode.value));
+/* An update is on trial now: a new one would overwrite the image it falls back to. */
+const onTrial = computed(() => (props.system?.trialSeconds ?? 0) > 0);
 
 /*
  * Everything that raises the restart splash goes through here.
@@ -328,6 +356,7 @@ async function sendImage(image: Blob, label: string, version?: string) {
   try {
     outcome = await uploadFirmware(
       image,
+      trialSeconds.value,
       (f) => {
         firmwarePct.value = Math.round(f * 100);
         watchPct(firmwarePct.value);
@@ -349,7 +378,7 @@ async function sendImage(image: Blob, label: string, version?: string) {
   phase.value = "restarting";
   /* Written down before the wait, not after: the answer is read on the far side
      of a reload that throws away everything this function knows. */
-  rememberRestart({ kind: "update", from: props.system?.version, to: version });
+  rememberRestart({ kind: "update", from: props.system?.version, to: version, trial: trialNote.value });
   if (await watchBack()) {
     phase.value = "back";
     watchStep("restart", "The device is back. Reloading the console...");
@@ -470,7 +499,7 @@ async function startInstall(version: string) {
   ]);
   watchStep("fetch", "Asking for the image...", { pct: null });
   try {
-    await requestDeviceInstall(version);
+    await requestDeviceInstall(version, trialSeconds.value);
   } catch (err) {
     endWatch();
     installStarting.value = null;
@@ -511,7 +540,7 @@ async function startInstall(version: string) {
       /* Written down before the wait: the verdict is read on the far side of a
          reload that throws away everything this function knows. */
       watchStep("write", "Written and verified.", { pct: null, expectedMs: EXPECTED_WRITE_MS });
-      rememberRestart({ kind: "update", from: props.system?.version, to: version });
+      rememberRestart({ kind: "update", from: props.system?.version, to: version, trial: trialNote.value });
       if (await watchBack()) {
         watchStep("restart", "The device is back. Reloading the console...");
         setTimeout(() => location.reload(), 1500);
@@ -599,7 +628,7 @@ onUnmounted(stopInstallPoll);
               {{ switching === slot.label ? "Switching..." : "Boot this" }}
             </button>
           </div>
-          <p v-if="runningPending" class="setting-note setting-note-blocked">
+          <p v-if="runningPending && !onTrial" class="setting-note setting-note-blocked">
             The running image is not confirmed yet - a reset now would roll back to
             {{ otherLabel }}.
           </p>
@@ -651,7 +680,7 @@ onUnmounted(stopInstallPoll);
               <button
                 type="button"
                 class="btn btn-sm btn-quiet"
-                :disabled="installStarting !== null"
+                :disabled="installStarting !== null || onTrial"
                 :title="`Have the device fetch ${rel.version} and restart into it`"
                 @click="startInstall(rel.version)"
               >
@@ -670,7 +699,10 @@ onUnmounted(stopInstallPoll);
         <template v-else>
           <!-- Idle controls: hidden while an install runs, so the block shows just
                the progress bar and one line - not three copies of the percentage. -->
-          <template v-if="!uploading">
+          <p v-if="onTrial" class="setting-note setting-note-blocked">
+            The last update is still on trial. Keep it or roll it back before installing another.
+          </p>
+          <template v-if="!uploading && !onTrial">
           <p class="setting-note">
             The update installs to
             <span class="mono">{{ updateTarget ?? "the spare slot" }}</span> - the inactive one;
@@ -729,6 +761,19 @@ onUnmounted(stopInstallPoll);
               >releases page</a
             >
             and pick it below.
+          </p>
+          <label class="setting-note uw-trial">
+            After an update
+            <select v-model="trialMode">
+              <option value="auto">keep it once this console reaches it</option>
+              <option value="ask">let me check it, then keep it</option>
+              <option value="off">keep it as soon as it boots</option>
+            </select>
+          </label>
+          <p v-if="trialMode !== 'off'" class="setting-note">
+            If it is not kept within {{ TRIAL_SECONDS / 60 }} minutes, the device goes back to
+            {{ system.version }}. Use this when the device is far away: a broken VPN or Wi-Fi
+            undoes itself.
           </p>
           <label class="btn btn-sm">
             Install firmware...
@@ -801,6 +846,15 @@ onUnmounted(stopInstallPoll);
 </template>
 
 <style scoped>
+.uw-trial {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.uw-trial select {
+  max-width: 100%;
+}
 .uw {
   position: relative;
 }

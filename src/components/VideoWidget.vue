@@ -25,7 +25,7 @@ import type { VideoStatus } from "../state/device";
 import { toast } from "../state/toasts";
 import { copyToClipboard } from "../ui/clipboard";
 import { inputRtt } from "../input/control";
-import { browserLag, transport } from "../video/stream";
+import { browserLag, drawn, transport } from "../video/stream";
 import { videoHistory } from "../state/videoHistory";
 import Sparkline from "./Sparkline.vue";
 
@@ -71,7 +71,14 @@ const rtcLost = ref(0);
 const rtcNacks = ref(0);
 const rtcRtt = ref(0);
 const inputMs = ref(0);
+const shownFps = ref(0);
+let shownAt = performance.now();
+let shownFrom = drawn.frames;
 const lagTimer = setInterval(() => {
+  const now = performance.now();
+  shownFps.value = ((drawn.frames - shownFrom) * 1000) / (now - shownAt);
+  shownAt = now;
+  shownFrom = drawn.frames;
   browserMs.value = Math.round(browserLag.ms);
   via.value = transport.via;
   rtcBufferMs.value = Math.round(transport.bufferMs);
@@ -276,8 +283,14 @@ function rate(kbps: number): string {
             </dd>
           </div>
           <div class="fact">
-            <dt>Published</dt>
+            <dt title="Frames the device encoded each second">Published</dt>
             <dd class="mono">{{ status.fps.toFixed(2) }} fps</dd>
+          </div>
+          <div class="fact">
+            <dt title="Frames this tab drew in the last second. Fewer than published means the link or the browser could not keep up">
+              Shown in this tab
+            </dt>
+            <dd class="mono">{{ shownFps.toFixed(1) }} fps</dd>
           </div>
           <div class="fact">
             <dt>Skipped as unchanged</dt>

@@ -215,6 +215,11 @@ export interface SystemInfo {
   updatable: boolean;
   /** The OTA app slots: version + image state per slot. Absent on older firmware. */
   ota?: OtaSlot[];
+  /**
+   * Seconds until the running update rolls back, 0 when it is not on trial
+   * (keepUpdate / rollbackUpdate). Absent on older firmware.
+   */
+  trialSeconds?: number;
   uptimeSeconds: number;
   heapFree: number;
   psramFree: number;
@@ -858,6 +863,28 @@ export async function restartDevice(): Promise<void> {
  * refuses a slot without a valid image, so this cannot brick it; the caller then
  * waits for it to come back the same way an update does.
  */
+/*
+ * An update on trial: the device goes back to the previous image unless a
+ * console keeps the new one in time. What proves the new image is not that it
+ * booted but that the console that installed it can reach it again - through
+ * the same VPN, Wi-Fi and TLS.
+ */
+export const TRIAL_SECONDS = 600;
+
+/** Keep the update that is on trial. */
+export async function keepUpdate(): Promise<void> {
+  const res = await fetch("/api/v1/system/update/keep", { method: "POST", headers: CONSOLE_HEADER });
+  if (res.status === 401) throw new Unauthorized();
+  if (!res.ok) throw new Error(await errorFromResponse(res, `could not keep the update (${res.status})`));
+}
+
+/** Drop the update that is on trial: the device restarts onto the previous image. */
+export async function rollbackUpdate(): Promise<void> {
+  const res = await fetch("/api/v1/system/update/rollback", { method: "POST", headers: CONSOLE_HEADER });
+  if (res.status === 401) throw new Unauthorized();
+  if (!res.ok) throw new Error(await errorFromResponse(res, `could not roll back (${res.status})`));
+}
+
 export async function switchBootSlot(label: string): Promise<void> {
   const res = await fetch("/api/v1/system/boot-slot", {
     method: "POST",
@@ -954,6 +981,8 @@ export interface UpdateOutcome {
  * restarts; if the new image never comes up, the bootloader returns to this
  * one, so the failure mode is a reboot rather than a dead device.
  *
+ * @param trial      seconds the new image stays on trial after it boots
+ *                   (TRIAL_SECONDS), 0 for none.
  * @param onProgress fraction of the image handed to the socket, 0..1.
  * @param onSent     the last byte is out; from here the device is writing and
  *                   verifying on its own and there is no progress to report,
@@ -961,6 +990,7 @@ export interface UpdateOutcome {
  */
 export function uploadFirmware(
   file: Blob,
+  trial: number,
   onProgress?: (fraction: number) => void,
   onSent?: () => void,
 ): Promise<UpdateOutcome> {
@@ -969,7 +999,7 @@ export function uploadFirmware(
   return new Promise((resolve, reject) => {
     let sent = false;
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/v1/system/update");
+    xhr.open("POST", trial ? `/api/v1/system/update?trial=${trial}` : "/api/v1/system/update");
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("X-ESP-KVM", "1");
     xhr.upload.onprogress = (e) => {
@@ -1143,11 +1173,11 @@ export interface InstallStatus {
 }
 
 /** Ask the device to fetch and install a published release. Returns at once. */
-export async function installRelease(version: string): Promise<void> {
+export async function installRelease(version: string, trial = 0): Promise<void> {
   const res = await fetch("/api/v1/system/install", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-ESP-KVM": "1" },
-    body: JSON.stringify({ version }),
+    body: JSON.stringify(trial ? { version, trial } : { version }),
   });
   if (res.status === 401) throw new Unauthorized();
   if (!res.ok) {

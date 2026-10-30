@@ -21,7 +21,7 @@ import { reconnectSource, type ScreenText, type VideoStatus } from "../state/dev
 import { pictureRect } from "../video/picture";
 import { RtcStream, rtcSupported } from "../video/rtcStream";
 import { playersOpen, WsSound, wsSoundSupported } from "../video/sound";
-import { VideoStream, type Handlers } from "../video/stream";
+import { VideoStream, drawn, type Handlers } from "../video/stream";
 import Icon from "./Icon.vue";
 
 const props = defineProps<{
@@ -85,6 +85,13 @@ let wsSound: WsSound | null = null;
 /* WebRTC failed on this page; the WebSocket carries the picture until the
    codec changes. Going back and forth would make the picture blink. */
 let rtcFailed = false;
+/* But if WebRTC worked here before, the failure was most likely the network
+   (a tunnel relay dropping out), so try it again now and then. */
+let rtcWorked = false;
+let rtcRetryMs = 0;
+let rtcRetry: number | null = null;
+const RTC_RETRY_FIRST_MS = 30_000;
+const RTC_RETRY_MAX_MS = 300_000;
 
 /** Take the picture over WebRTC: H.264 only, and only where both ends can. */
 function wantRtc(): boolean {
@@ -829,6 +836,7 @@ function startDemoScreen() {
   const draw = (t: number) => {
     const dt = lastFrame ? Math.min(0.1, (t - lastFrame) / 1000) : 0;
     lastFrame = t;
+    drawn.frames++;
     /* A text screen while the machine is booting or sitting at a prompt. It
        changes rarely, so it is redrawn only when it changes. */
     const g = demoGrid();
@@ -981,6 +989,7 @@ function startStream() {
       ctx ??= el.getContext("2d");
       ctx?.drawImage(image, 0, 0);
       image.close();
+      drawn.frames++;
       loaded.value = true;
       failed.value = false;
       codecError.value = null;
@@ -1029,7 +1038,20 @@ function startStream() {
       audio: Boolean(props.audio),
       onFallback(reason, worked) {
         console.warn(`WebRTC video: ${reason}; ${worked ? "starting again" : "using the WebSocket"}`);
-        if (!worked) rtcFailed = true;
+        if (worked) {
+          rtcWorked = true;
+          rtcRetryMs = 0;
+        } else {
+          rtcFailed = true;
+          if (rtcWorked && rtcRetry === null) {
+            rtcRetryMs = Math.min(rtcRetryMs ? rtcRetryMs * 2 : RTC_RETRY_FIRST_MS, RTC_RETRY_MAX_MS);
+            rtcRetry = window.setTimeout(() => {
+              rtcRetry = null;
+              rtcFailed = false;
+              if (!props.paused && wantRtc() && !(stream instanceof RtcStream)) startStream();
+            }, rtcRetryMs);
+          }
+        }
         startStream();
       },
     });
@@ -1175,6 +1197,7 @@ onUnmounted(() => {
   stream?.stop();
   wsSound?.stop();
   if (wsRetry !== null) clearTimeout(wsRetry);
+  if (rtcRetry !== null) clearTimeout(rtcRetry);
   if (demoRAF) cancelAnimationFrame(demoRAF);
   demoCleanup?.();
 });

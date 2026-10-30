@@ -77,6 +77,12 @@ function noteLag(arrivedMs: number) {
  */
 export const transport = { via: "", bufferMs: 0, lost: 0, nacks: 0, rttMs: 0 };
 
+/**
+ * Frames drawn in this tab, counted by the screen. The device's own fps is what
+ * it encoded, and a slow link or browser may show far fewer of them.
+ */
+export const drawn = { frames: 0 };
+
 export type Drawable = (ImageBitmap | VideoFrame) & { close(): void };
 
 export interface FrameInfo {

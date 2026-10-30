@@ -42,6 +42,7 @@ import ToastHost from "./components/ToastHost.vue";
 import KeyboardPanel from "./components/KeyboardPanel.vue";
 import TouchControls from "./components/TouchControls.vue";
 import UpdateWidget from "./components/UpdateWidget.vue";
+import TrialBanner from "./components/TrialBanner.vue";
 import { useInput } from "./input/useInput";
 import { soundHeld } from "./video/sound";
 import { NO_ZOOM, useTouch, type Zoom } from "./input/useTouch";
@@ -61,6 +62,7 @@ import {
   loadCapabilities,
   loadSchema,
   loadSystemInfo,
+  keepUpdate,
   loadUsbProbe,
   loadValues,
   loadVideoStatus,
@@ -1599,7 +1601,29 @@ async function enableUpdateChecks() {
   }
 }
 
-function reportRestart(version: string, coprocFw?: string) {
+/*
+ * This console installed an update on trial and asked to keep it once it got
+ * back in: reaching the device again through the same network, VPN and TLS is
+ * the proof the trial waits for.
+ */
+function trialKept() {
+  if (system.value) system.value = { ...system.value, trialSeconds: 0 };
+}
+
+async function keepOwnUpdate(version: string) {
+  try {
+    await keepUpdate();
+    trialKept();
+    restartOutcome.value = {
+      bad: false,
+      text: `The device is running ${version}. This console reached it again, so the update is kept.`,
+    };
+  } catch {
+    /* The banner still offers it by hand. */
+  }
+}
+
+function reportRestart(version: string, coprocFw?: string, trialSeconds = 0) {
   const note = takeRestart();
   if (!note) return;
   if (note.kind === "coproc") {
@@ -1621,6 +1645,7 @@ function reportRestart(version: string, coprocFw?: string) {
       return;
     }
     restartOutcome.value = { bad: false, text: `The device is running ${version}.` };
+    if (note.trial === "auto" && trialSeconds > 0) void keepOwnUpdate(version);
     return;
   }
   restartOutcome.value = { bad: false, text: "The device restarted and is back." };
@@ -1659,7 +1684,7 @@ async function startConsole() {
     caps.value = c;
     system.value = sys;
     bootVersion = sys.version;
-    reportRestart(sys.version, sys.coproc?.fw);
+    reportRestart(sys.version, sys.coproc?.fw, sys.trialSeconds);
     ready.value = true;
     /* The preference is remembered, so a page opened on a BIOS should arrive as
        characters rather than after the first six seconds of the retry rhythm. */
@@ -2110,6 +2135,7 @@ const LED_BITS: Array<[number, string]> = [
       <span>{{ restartOutcome.text }}</span>
       <button type="button" class="btn btn-sm" @click="restartOutcome = null">Dismiss</button>
     </div>
+    <TrialBanner :system="system" @kept="trialKept" />
     <div v-if="suggested" class="update-banner" role="status">
       <span>
         This is a {{ suggested.name }}. Make a profile for it? Settings that suit it, used whenever

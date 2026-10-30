@@ -22,6 +22,11 @@ export interface RestartNote {
   from?: string;
   /** Version we handed it, when we know which one to expect back. */
   to?: string;
+  /**
+   * The update went on trial. "auto": this console keeps it once it is back,
+   * which is the proof. "ask": the operator checks it first.
+   */
+  trial?: "auto" | "ask";
 }
 
 /*

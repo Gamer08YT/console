@@ -350,10 +350,23 @@ function stored(key: string, fallback: string): string {
 const installedVersion = () => stored(VERSION_KEY, fixtureOta[0].version);
 const otherVersion = () => stored(OTHER_KEY, fixtureOta[1].version);
 /* A new image goes to the spare slot, and the running one becomes the spare. */
-function bootInto(version: string, other: string) {
+/* When an update on trial goes back on its own (Date.now() ms), 0 for none. */
+const TRIAL_KEY = "espkvm-demo-trial";
+function trialLeft(): number {
+  const until = Number(stored(TRIAL_KEY, "0"));
+  if (!until) return 0;
+  const left = Math.ceil((until - Date.now()) / 1000);
+  if (left > 0) return left;
+  /* Nobody kept it: back to the old one, as the device would. */
+  bootInto(otherVersion(), installedVersion());
+  return 0;
+}
+
+function bootInto(version: string, other: string, trial = 0) {
   try {
     sessionStorage.setItem(VERSION_KEY, version);
     sessionStorage.setItem(OTHER_KEY, other);
+    sessionStorage.setItem(TRIAL_KEY, trial ? String(Date.now() + 7000 + trial * 1000) : "0");
   } catch {
     /* a private window: the verdict will simply say the old version */
   }
@@ -377,8 +390,9 @@ function liveInfo(): Json {
   return {
     ...base,
     version,
+    trialSeconds: trialLeft(),
     ota: [
-      { label: "ota_0", version, state: "valid", running: true, boot: true },
+      { label: "ota_0", version, state: trialLeft() ? "pending" : "valid", running: true, boot: true },
       { label: "ota_1", version: otherVersion(), state: "valid", running: false, boot: false },
     ],
     atx: { enabled: true, known: true, on: m.powerOn },
@@ -393,8 +407,9 @@ function liveInfo(): Json {
 /* Installing a published release: the device downloads it itself. Here the
    progress climbs over a few seconds and then the device goes away. */
 const install = { state: "idle", percent: 0, version: "", message: "" };
-function installStart(version: string): string | null {
+function installStart(version: string, trial = 0): string | null {
   if (install.state === "running") return "an install is already running";
+  if (trialLeft()) return "the last update is still on trial: keep it or roll it back first";
   if (!/^v\.\d/.test(version)) return "not a release tag";
   Object.assign(install, { state: "running", percent: -1, version, message: "connecting" });
   let pct = 0;
@@ -407,7 +422,7 @@ function installStart(version: string): string | null {
     }
     Object.assign(install, { state: "done", percent: 100, message: "installed; restarting" });
     setTimeout(() => {
-      bootInto(version, installedVersion());
+      bootInto(version, installedVersion(), trial);
       Object.assign(install, { state: "idle", percent: 0, version: "", message: "" });
     }, 800);
   };
@@ -885,10 +900,18 @@ async function route(
       case "/api/v1/system/restart":
         return json({ status: "restarting" });
       case "/api/v1/system/install": {
-        const { version } = (await bodyJson(init, req)) as { version?: string };
-        const err = installStart(String(version ?? ""));
+        const { version, trial } = (await bodyJson(init, req)) as { version?: string; trial?: number };
+        const err = installStart(String(version ?? ""), Number(trial ?? 0));
         return err ? json({ error: err }, 409) : json({ status: "started" }, 202);
       }
+      case "/api/v1/system/update/keep":
+        if (!trialLeft()) return json({ error: "no update is on trial" }, 409);
+        sessionStorage.setItem(TRIAL_KEY, "0");
+        return json({ status: "kept" });
+      case "/api/v1/system/update/rollback":
+        if (!trialLeft()) return json({ error: "no update is on trial" }, 409);
+        bootInto(otherVersion(), installedVersion());
+        return json({ status: "restarting" });
       case "/api/v1/system/boot-slot": {
         const { label } = (await bodyJson(init, req)) as { label?: string };
         if (label !== "ota_1") return json({ error: "already running from that slot" }, 409);
@@ -1024,7 +1047,8 @@ class DemoXhr {
     if (this.path.startsWith("/api/v1/system/update")) {
       /* Written, restarting - and the device really does go away, so the
          console's waiting screen and its verdict afterwards are the real ones. */
-      bootInto(NEXT_VERSION, installedVersion());
+      const trial = Number(new URLSearchParams(this.path.split("?")[1] ?? "").get("trial") ?? 0);
+      bootInto(NEXT_VERSION, installedVersion(), trial);
       this.status = 200;
       this.responseText = JSON.stringify({ status: "written", restarting: true });
     } else if (this.path.startsWith("/api/v1/storage/upload")) {
