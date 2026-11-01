@@ -541,7 +541,8 @@ async function write(key: string, value: number | string | boolean) {
    * the restart can be offered at once. Others that need one come in groups
    * (network, pins): asked after the first, the device would restart half set. */
   const setting = props.schema.find((s) => s.key === key);
-  const offerRestart = Boolean(setting?.reboot && setting.profile) && props.values[key] !== value;
+  const offerRestart = Boolean(setting?.reboot && (setting.profile || setting.rebootPrompt)) &&
+    props.values[key] !== value;
   busy.value = true;
   let saved = false;
   try {
@@ -750,7 +751,11 @@ async function onSettingsFile(e: Event) {
     return;
   }
   if (!confirm(`Apply this file?\n\n${describePlan(plan, false).join("\n\n")}`)) return;
+  const restartSetting = props.schema.find((s) =>
+    s.rebootPrompt && s.key in plan.apply && props.values[s.key] !== plan.apply[s.key],
+  );
   busy.value = true;
+  let restartNeeded = false;
   try {
     /* The file's values are Default's: written with Default active, or a
        profile's own keys would take them. */
@@ -758,6 +763,7 @@ async function onSettingsFile(e: Event) {
     if (Object.keys(plan.apply).length) {
       if (was !== 0) await selectProfile(0);
       await saveSettings(plan.apply);
+      restartNeeded = Boolean(restartSetting);
     }
     for (const p of plan.profiles) {
       const same = list?.profiles.find((x) => x.id !== 0 && x.name === p.name);
@@ -774,18 +780,43 @@ async function onSettingsFile(e: Event) {
   } finally {
     busy.value = false;
   }
+  if (restartNeeded && restartSetting &&
+      confirm(`${restartSetting.title} applies after a restart. Restart now?`)) {
+    try {
+      if (await runRestart("Restarting the device", restartDevice, { kind: "manual" })) {
+        location.reload();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
 }
 
 async function doReset() {
   if (!confirm("Restore every setting to its default?")) return;
+  const restartSetting = props.schema.find((s) =>
+    s.rebootPrompt && props.values[s.key] !== s.default,
+  );
   busy.value = true;
+  let restartNeeded = false;
   try {
     emit("values", await resetSettings());
+    restartNeeded = Boolean(restartSetting);
     toast.info("Settings restored to defaults");
   } catch (err) {
     toast.error(err instanceof Error ? err.message : String(err));
   } finally {
     busy.value = false;
+  }
+  if (restartNeeded && restartSetting &&
+      confirm(`${restartSetting.title} applies after a restart. Restart now?`)) {
+    try {
+      if (await runRestart("Restarting the device", restartDevice, { kind: "manual" })) {
+        location.reload();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
   }
 }
 

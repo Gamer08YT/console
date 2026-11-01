@@ -38,6 +38,8 @@ export interface Setting {
   requires?: string;
   /** Takes effect only after the device restarts. */
   reboot?: boolean;
+  /** Offer restarting now when this standalone global setting changes. */
+  rebootPrompt?: boolean;
   /** Write-only secret (e.g. a VPN key): never read back, submitted only when set. */
   secret?: boolean;
   /** An INT that is a GPIO number: render a pin picker (free GPIOs + None). */
